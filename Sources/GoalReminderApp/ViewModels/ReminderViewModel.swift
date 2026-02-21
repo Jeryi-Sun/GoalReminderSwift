@@ -14,9 +14,23 @@ final class ReminderViewModel: ObservableObject {
 
     @Published var newGoalTitle = ""
     @Published var intervalText = "30.00"
+    @Published var maxIntervalText = "60.00"
+    @Published var adaptiveIntervalEnabled = false
+    @Published var effectiveIntervalText = "当前有效间隔: --"
     @Published var nextReminderText = "下次提醒: --"
     @Published var statusText = "状态: 就绪"
     @Published var dataPathText = ""
+
+    @Published var mobilePushEnabled = false
+    @Published var mobileIdleThresholdText = "20"
+    @Published var mobileWorkTimeEnabled = false
+    @Published var mobileWorkStartText = "09:00"
+    @Published var mobileWorkEndText = "18:00"
+    @Published var serverChanSendKey = ""
+    @Published var mobileAlertTitle = "目标提醒器"
+    @Published var mobileAlertBody = "你已经 20 分钟没有操作电脑，是否偏离目标了？"
+    @Published var mobileConfigPathText = "微信推送配置: --"
+    @Published var currentIdleStateText = "当前空闲: --"
 
     @Published var showingHelpSheet = false
     @Published var alertItem: AlertItem?
@@ -25,10 +39,20 @@ final class ReminderViewModel: ObservableObject {
     private let popupManager: ReminderPopupManager
     private let insightEngine: GoalInsightProviding
     private let pythonBridge: PythonBridgeProviding
+    private let mobilePushStore: MobilePushConfigStore
+    private let mobilePushSender: MobilePushSending
+    private let idleMonitor: IdleInputMonitoring
 
     private var schedulerTask: Task<Void, Never>?
+    private var idleMonitorTask: Task<Void, Never>?
     private var hasStarted = false
     private var popupLocked = false
+    private var idlePushSentForCurrentIdlePeriod = false
+    private var baseIntervalMinutes = 30.0
+    private var maxIntervalMinutes = 60.0
+    private var adaptivePolicyEnabled = false
+    private var effectiveIntervalMinutes = 30.0
+    private var consecutiveInProgressCount = 0
 
     private static let minIntervalSeconds = 5.0
 
@@ -48,16 +72,23 @@ final class ReminderViewModel: ObservableObject {
         store: AppDataStore,
         popupManager: ReminderPopupManager = ReminderPopupManager(),
         insightEngine: GoalInsightProviding = GoalInsightEngine(),
-        pythonBridge: PythonBridgeProviding = PythonBridgeService()
+        pythonBridge: PythonBridgeProviding = PythonBridgeService(),
+        mobilePushStore: MobilePushConfigStore = MobilePushConfigStore(),
+        mobilePushSender: MobilePushSending = ServerChanPushService(),
+        idleMonitor: IdleInputMonitoring = SystemIdleInputMonitor()
     ) {
         self.store = store
         self.popupManager = popupManager
         self.insightEngine = insightEngine
         self.pythonBridge = pythonBridge
+        self.mobilePushStore = mobilePushStore
+        self.mobilePushSender = mobilePushSender
+        self.idleMonitor = idleMonitor
     }
 
     deinit {
         schedulerTask?.cancel()
+        idleMonitorTask?.cancel()
     }
 
     func onAppear() {
@@ -68,7 +99,9 @@ final class ReminderViewModel: ObservableObject {
 
         Task { @MainActor in
             await reloadState(preserveSelection: nil, keepCurrentIntervalInput: false)
+            await loadMobilePushConfig()
             restartScheduler()
+            restartIdleWatcher()
             if goals.isEmpty {
                 setStatus("先添加至少一个目标，然后设置提醒间隔。")
                 showingHelpSheet = true
@@ -118,20 +151,74 @@ final class ReminderViewModel: ObservableObject {
     }
 
     func saveInterval() {
-        let raw = intervalText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let minutes = Double(raw), minutes > 0 else {
+        let baseRaw = intervalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxRaw = maxIntervalText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let baseMinutes = Double(baseRaw), baseMinutes > 0 else {
             handleError(AppError.invalidInterval, title: "设置失败")
+            return
+        }
+        guard let maxMinutes = Double(maxRaw), maxMinutes > 0 else {
+            handleError(AppError.invalidMaxInterval, title: "设置失败")
+            return
+        }
+        guard maxMinutes >= baseMinutes else {
+            handleError(AppError.invalidMaxInterval, title: "设置失败")
             return
         }
 
         Task { @MainActor in
             do {
-                try await store.setInterval(minutes: minutes)
+                try await store.setReminderPolicy(
+                    baseMinutes: baseMinutes,
+                    maxMinutes: maxMinutes,
+                    adaptiveEnabled: adaptiveIntervalEnabled
+                )
                 await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: false)
+                resetAdaptiveRuntime()
                 restartScheduler()
-                setStatus("提醒间隔已更新为 \(intervalText) 分钟。")
+                setStatus("提醒策略已更新：基础 \(Self.formatNumber(baseIntervalMinutes)) 分钟，最大 \(Self.formatNumber(maxIntervalMinutes)) 分钟。")
             } catch {
                 handleError(error, title: "设置失败")
+            }
+        }
+    }
+
+    func saveMobilePushConfig() {
+        let config = currentMobilePushConfig()
+
+        if config.enabled, config.serverChanSendKey.isEmpty {
+            handleError(AppError.invalidServerChanConfig("启用推送时必须填写 SendKey"), title: "保存手机推送配置失败")
+            return
+        }
+        if config.workTimeEnabled,
+           !Self.isValidHHmm(config.workStartHHmm) || !Self.isValidHHmm(config.workEndHHmm)
+        {
+            handleError(AppError.invalidServerChanConfig("工作时段格式应为 HH:mm"), title: "保存手机推送配置失败")
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try await mobilePushStore.save(config)
+                await loadMobilePushConfig()
+                restartIdleWatcher()
+                setStatus("手机推送配置已保存。")
+            } catch {
+                handleError(error, title: "保存手机推送配置失败")
+            }
+        }
+    }
+
+    func sendTestMobilePush() {
+        let config = currentMobilePushConfig()
+
+        Task { @MainActor in
+            do {
+                try await mobilePushSender.sendTestAlert(config: config)
+                setStatus("已发送测试微信提醒。")
+            } catch {
+                handleError(error, title: "测试推送失败")
             }
         }
     }
@@ -210,9 +297,11 @@ final class ReminderViewModel: ObservableObject {
                 return
             }
             while !Task.isCancelled {
-                let intervalSeconds = max(await store.intervalMinutes() * 60.0, Self.minIntervalSeconds)
+                let intervalMinutes = currentSchedulerIntervalMinutes()
+                let intervalSeconds = max(intervalMinutes * 60.0, Self.minIntervalSeconds)
                 let nextDate = Date().addingTimeInterval(intervalSeconds)
                 nextReminderText = "下次提醒: \(Self.timeFormatter.string(from: nextDate))"
+                effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(intervalMinutes)) 分钟"
 
                 do {
                     try await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
@@ -226,6 +315,57 @@ final class ReminderViewModel: ObservableObject {
 
                 await fireScheduledReminder()
             }
+        }
+    }
+
+    private func restartIdleWatcher() {
+        idleMonitorTask?.cancel()
+        idleMonitorTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            while !Task.isCancelled {
+                let config = currentMobilePushConfig()
+
+                if config.enabled {
+                    if config.workTimeEnabled, !isWithinWorkTime(config: config) {
+                        currentIdleStateText = "当前空闲: 工作时段外（\(config.workStartHHmm)-\(config.workEndHHmm)）"
+                        idlePushSentForCurrentIdlePeriod = false
+                    } else {
+                        let idleSeconds = idleMonitor.currentIdleSeconds()
+                        currentIdleStateText = "当前空闲: \(Int(idleSeconds)) 秒"
+
+                        if idleSeconds < 2 {
+                            idlePushSentForCurrentIdlePeriod = false
+                        }
+
+                        let thresholdSeconds = max(config.idleThresholdMinutes * 60.0, 60)
+                        if idleSeconds >= thresholdSeconds && !idlePushSentForCurrentIdlePeriod {
+                            idlePushSentForCurrentIdlePeriod = true
+                            await sendIdleAlertToMobile(config: config, idleSeconds: idleSeconds)
+                        }
+                    }
+                } else {
+                    currentIdleStateText = "当前空闲: 未启用手机空闲推送"
+                    idlePushSentForCurrentIdlePeriod = false
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                } catch {
+                    break
+                }
+            }
+        }
+    }
+
+    private func sendIdleAlertToMobile(config: MobilePushConfig, idleSeconds: Double) async {
+        do {
+            try await mobilePushSender.sendIdleAlert(config: config, idleSeconds: idleSeconds)
+            setStatus("已发送微信空闲提醒（\(Int(idleSeconds / 60)) 分钟未操作）")
+        } catch {
+            handleError(error, title: "手机空闲推送失败")
         }
     }
 
@@ -280,10 +420,48 @@ final class ReminderViewModel: ObservableObject {
         do {
             let record = try await store.appendRecord(goal: goal, status: status)
             await reloadState(preserveSelection: goal.id, keepCurrentIntervalInput: true)
-            setStatus("已记录：\(record.status.rawValue)（\(goal.title)）")
+            let policyNote = updateAdaptiveInterval(after: status)
+            if let policyNote {
+                setStatus("已记录：\(record.status.rawValue)（\(goal.title)）；\(policyNote)")
+            } else {
+                setStatus("已记录：\(record.status.rawValue)（\(goal.title)）")
+            }
         } catch {
             handleError(error, title: "记录失败")
         }
+    }
+
+    private func loadMobilePushConfig() async {
+        let config = await mobilePushStore.load()
+        let configPath = await mobilePushStore.configPath()
+
+        mobilePushEnabled = config.enabled
+        mobileIdleThresholdText = Self.formatNumber(config.idleThresholdMinutes)
+        mobileWorkTimeEnabled = config.workTimeEnabled
+        mobileWorkStartText = config.workStartHHmm
+        mobileWorkEndText = config.workEndHHmm
+        serverChanSendKey = config.serverChanSendKey
+        mobileAlertTitle = config.alertTitle
+        mobileAlertBody = config.alertBody
+        mobileConfigPathText = "微信推送配置: \(configPath)"
+    }
+
+    private func currentMobilePushConfig() -> MobilePushConfig {
+        let threshold = max(Double(mobileIdleThresholdText) ?? 20, 1)
+        return MobilePushConfig(
+            enabled: mobilePushEnabled,
+            idleThresholdMinutes: threshold,
+            serverChanSendKey: serverChanSendKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            workTimeEnabled: mobileWorkTimeEnabled,
+            workStartHHmm: Self.normalizedHHmm(mobileWorkStartText, fallback: "09:00"),
+            workEndHHmm: Self.normalizedHHmm(mobileWorkEndText, fallback: "18:00"),
+            alertTitle: mobileAlertTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "目标提醒器"
+                : mobileAlertTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+            alertBody: mobileAlertBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "你已经 20 分钟没有操作电脑，是否偏离目标了？"
+                : mobileAlertBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     private func reloadState(
@@ -297,9 +475,21 @@ final class ReminderViewModel: ObservableObject {
         history = Array(snapshot.history.suffix(60).reversed())
         dataPathText = "数据文件: \(path)"
 
+        baseIntervalMinutes = snapshot.intervalMinutes
+        maxIntervalMinutes = max(snapshot.maxIntervalMinutes, baseIntervalMinutes)
+        adaptivePolicyEnabled = snapshot.adaptiveIntervalEnabled
         if !keepCurrentIntervalInput {
-            intervalText = Self.formatInterval(snapshot.intervalMinutes)
+            intervalText = Self.formatNumber(baseIntervalMinutes)
+            maxIntervalText = Self.formatNumber(maxIntervalMinutes)
+            adaptiveIntervalEnabled = adaptivePolicyEnabled
         }
+        if !adaptivePolicyEnabled {
+            effectiveIntervalMinutes = baseIntervalMinutes
+            consecutiveInProgressCount = 0
+        } else {
+            effectiveIntervalMinutes = min(maxIntervalMinutes, max(effectiveIntervalMinutes, baseIntervalMinutes))
+        }
+        effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
 
         if let preserveSelection,
            goals.contains(where: { $0.id == preserveSelection }) {
@@ -310,7 +500,99 @@ final class ReminderViewModel: ObservableObject {
         }
     }
 
-    private static func formatInterval(_ minutes: Double) -> String {
-        String(format: "%.2f", minutes)
+    private func currentSchedulerIntervalMinutes() -> Double {
+        if !adaptivePolicyEnabled {
+            effectiveIntervalMinutes = baseIntervalMinutes
+        }
+        effectiveIntervalMinutes = min(maxIntervalMinutes, max(baseIntervalMinutes, effectiveIntervalMinutes))
+        return effectiveIntervalMinutes
+    }
+
+    private func resetAdaptiveRuntime() {
+        consecutiveInProgressCount = 0
+        effectiveIntervalMinutes = baseIntervalMinutes
+        effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
+    }
+
+    private func updateAdaptiveInterval(after status: GoalProgressStatus) -> String? {
+        guard adaptivePolicyEnabled else {
+            resetAdaptiveRuntime()
+            return nil
+        }
+
+        switch status {
+        case .inProgress:
+            consecutiveInProgressCount += 1
+            let oldValue = effectiveIntervalMinutes
+            let step = max(baseIntervalMinutes * 0.15, 0.5)
+            effectiveIntervalMinutes = min(maxIntervalMinutes, oldValue + step)
+            effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
+
+            if abs(effectiveIntervalMinutes - oldValue) < 0.001 {
+                return "连续 \(consecutiveInProgressCount) 次“正在完成”，已达到最大间隔 \(Self.formatNumber(maxIntervalMinutes)) 分钟"
+            }
+            return "连续 \(consecutiveInProgressCount) 次“正在完成”，间隔调整为 \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
+        case .completed, .startNow:
+            let shouldReset = consecutiveInProgressCount > 0 || abs(effectiveIntervalMinutes - baseIntervalMinutes) > 0.001
+            resetAdaptiveRuntime()
+            if shouldReset {
+                return "状态变化，间隔恢复为基础值 \(Self.formatNumber(baseIntervalMinutes)) 分钟"
+            }
+            return nil
+        }
+    }
+
+    private func isWithinWorkTime(config: MobilePushConfig) -> Bool {
+        guard config.workTimeEnabled else {
+            return true
+        }
+        guard let start = Self.minutesFromHHmm(config.workStartHHmm),
+              let end = Self.minutesFromHHmm(config.workEndHHmm)
+        else {
+            return true
+        }
+
+        let now = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let nowMinutes = (now.hour ?? 0) * 60 + (now.minute ?? 0)
+
+        if start == end {
+            return true
+        }
+        if start < end {
+            return nowMinutes >= start && nowMinutes < end
+        }
+        return nowMinutes >= start || nowMinutes < end
+    }
+
+    private static func isValidHHmm(_ value: String) -> Bool {
+        minutesFromHHmm(value) != nil
+    }
+
+    private static func normalizedHHmm(_ value: String, fallback: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let minutes = minutesFromHHmm(trimmed) else {
+            return fallback
+        }
+        let hour = minutes / 60
+        let minute = minutes % 60
+        return String(format: "%02d:%02d", hour, minute)
+    }
+
+    private static func minutesFromHHmm(_ value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: ":")
+        guard parts.count == 2,
+              let hour = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0 ... 23).contains(hour),
+              (0 ... 59).contains(minute)
+        else {
+            return nil
+        }
+        return hour * 60 + minute
+    }
+
+    private static func formatNumber(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 }

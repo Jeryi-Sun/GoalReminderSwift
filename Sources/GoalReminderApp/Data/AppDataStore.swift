@@ -16,6 +16,7 @@ actor AppDataStore {
         self.fileURL = folderURL.appendingPathComponent("state.json")
         self.state = Self.loadState(from: fileURL) ?? AppState()
         self.state.intervalMinutes = max(self.state.intervalMinutes, Self.minIntervalMinutes)
+        self.state.maxIntervalMinutes = max(self.state.maxIntervalMinutes, self.state.intervalMinutes)
     }
 
     func dataFilePath() -> String {
@@ -35,6 +36,26 @@ actor AppDataStore {
             throw AppError.invalidInterval
         }
         state.intervalMinutes = max(minutes, Self.minIntervalMinutes)
+        state.maxIntervalMinutes = max(state.maxIntervalMinutes, state.intervalMinutes)
+        try persist()
+    }
+
+    func setReminderPolicy(
+        baseMinutes: Double,
+        maxMinutes: Double,
+        adaptiveEnabled: Bool
+    ) throws {
+        guard baseMinutes > 0 else {
+            throw AppError.invalidInterval
+        }
+        let safeBase = max(baseMinutes, Self.minIntervalMinutes)
+        guard maxMinutes >= safeBase else {
+            throw AppError.invalidMaxInterval
+        }
+
+        state.intervalMinutes = safeBase
+        state.maxIntervalMinutes = maxMinutes
+        state.adaptiveIntervalEnabled = adaptiveEnabled
         try persist()
     }
 

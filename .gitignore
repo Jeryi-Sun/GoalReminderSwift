@@ -4,3 +4,6 @@
 DerivedData/
 .home/
 .swift-cache/
+release/GoalReminderSwift.app/
+**/xcuserdata/
+**/*.xcuserstate

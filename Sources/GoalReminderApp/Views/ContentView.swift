@@ -11,7 +11,7 @@ struct ContentView: View {
             statusBar
         }
         .padding(18)
-        .frame(minWidth: 980, minHeight: 680)
+        .frame(minWidth: 1080, minHeight: 760)
         .background(Color(hex: "F6F2EE"))
         .onAppear {
             viewModel.onAppear()
@@ -76,11 +76,11 @@ struct ContentView: View {
                     .foregroundStyle(Color(hex: "1F1F1F"))
                 Text("1. 左侧输入目标并点击添加")
                     .font(.arial(size: 12))
-                Text("2. 右侧设置提醒间隔并保存")
+                Text("2. 右侧设置基础间隔 + 最大间隔，开启智能调节")
                     .font(.arial(size: 12))
-                Text("3. 等待全屏弹窗，选择 已完成 / 正在完成 / 马上去完成")
+                Text("3. 如需手机告警，填写 Server酱 SendKey，并可限定工作时段")
                     .font(.arial(size: 12))
-                Text("4. 在记录区查看历史进展")
+                Text("4. 等待全屏弹窗，选择 已完成 / 正在完成 / 马上去完成")
                     .font(.arial(size: 12))
             }
             .foregroundStyle(Color(hex: "1F1F1F"))
@@ -193,84 +193,192 @@ struct ContentView: View {
 
     private var settingsPanel: some View {
         Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("设置与记录")
-                    .font(.arial(size: 20, weight: .bold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("设置与记录")
+                        .font(.arial(size: 20, weight: .bold))
 
-                Text("步骤3：设置提醒间隔（分钟）")
-                    .font(.arial(size: 12, weight: .bold))
+                    Text("步骤3：设置提醒策略（分钟）")
+                        .font(.arial(size: 12, weight: .bold))
 
-                HStack(spacing: 8) {
-                    TextField("分钟", text: $viewModel.intervalText)
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("基础间隔")
+                                .font(.arial(size: 11))
+                            TextField("30", text: $viewModel.intervalText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.arial(size: 13))
+                                .frame(width: 90)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("最大间隔")
+                                .font(.arial(size: 11))
+                            TextField("60", text: $viewModel.maxIntervalText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.arial(size: 13))
+                                .frame(width: 90)
+                        }
+
+                        Button("保存策略") {
+                            viewModel.saveInterval()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.arial(size: 12, weight: .bold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(hex: "579FCA"))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        Spacer()
+                    }
+
+                    Toggle("启用智能间隔（连续“正在完成”会逐步拉长提醒）", isOn: $viewModel.adaptiveIntervalEnabled)
+                        .font(.arial(size: 12))
+                        .toggleStyle(.switch)
+
+                    Text(viewModel.effectiveIntervalText)
+                        .font(.arial(size: 11))
+                        .foregroundStyle(Color(hex: "666666"))
+
+                    Text(viewModel.dataPathText)
+                        .font(.arial(size: 10))
+                        .foregroundStyle(Color(hex: "666666"))
+
+                    Divider()
+
+                    Text("手机端告警（Server酱 微信推送）")
+                        .font(.arial(size: 14, weight: .bold))
+
+                    Toggle("启用空闲推送到微信", isOn: $viewModel.mobilePushEnabled)
+                        .font(.arial(size: 12, weight: .bold))
+                        .toggleStyle(.switch)
+
+                    HStack(spacing: 8) {
+                        Text("空闲阈值(分钟)")
+                            .font(.arial(size: 12))
+                        TextField("20", text: $viewModel.mobileIdleThresholdText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                    }
+
+                    Toggle("只在工作时段内发送空闲推送", isOn: $viewModel.mobileWorkTimeEnabled)
+                        .font(.arial(size: 12))
+                        .toggleStyle(.switch)
+
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("工作开始")
+                                .font(.arial(size: 11))
+                            TextField("09:00", text: $viewModel.mobileWorkStartText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 90)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("工作结束")
+                                .font(.arial(size: 11))
+                            TextField("18:00", text: $viewModel.mobileWorkEndText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 90)
+                        }
+                        Spacer()
+                    }
+
+                    TextField("Server酱 SendKey（SCTxxxxxxxx）", text: $viewModel.serverChanSendKey)
                         .textFieldStyle(.roundedBorder)
-                        .font(.arial(size: 13))
-                        .frame(width: 120)
+                        .font(.arial(size: 12))
 
-                    Button("保存间隔") {
-                        viewModel.saveInterval()
+                    Text("前往 https://sct.ftqq.com 获取 SendKey")
+                        .font(.arial(size: 11))
+                        .foregroundStyle(Color(hex: "666666"))
+
+                    TextField("推送标题", text: $viewModel.mobileAlertTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.arial(size: 12))
+                    TextField("推送正文", text: $viewModel.mobileAlertBody)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.arial(size: 12))
+
+                    Text(viewModel.mobileConfigPathText)
+                        .font(.arial(size: 10))
+                        .foregroundStyle(Color(hex: "666666"))
+                    Text(viewModel.currentIdleStateText)
+                        .font(.arial(size: 11))
+                        .foregroundStyle(Color(hex: "666666"))
+
+                    HStack(spacing: 8) {
+                        Button("保存手机推送配置") {
+                            viewModel.saveMobilePushConfig()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.arial(size: 12, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(hex: "B4DDF4"))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        Button("发送测试微信") {
+                            viewModel.sendTestMobilePush()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.arial(size: 12, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(hex: "F7DC7C"))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    Divider()
+
+                    Text("步骤4：最近记录")
+                        .font(.arial(size: 12, weight: .bold))
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color(hex: "FCFCFC"))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color(hex: "E7D8CC"), lineWidth: 1)
+                            }
+
+                        if viewModel.history.isEmpty {
+                            Text("暂无记录。完成一次弹窗选择后会显示在这里。")
+                                .font(.arial(size: 13))
+                                .foregroundStyle(Color(hex: "666666"))
+                        } else {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 6) {
+                                    ForEach(viewModel.history) { record in
+                                        Text(viewModel.historyLine(for: record))
+                                            .font(.arial(size: 11))
+                                            .foregroundStyle(Color(hex: "1F1F1F"))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(Color.white)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    }
+                                }
+                                .padding(8)
+                            }
+                        }
+                    }
+                    .frame(height: 260)
+
+                    Button("刷新记录") {
+                        viewModel.refreshHistory()
                     }
                     .buttonStyle(.plain)
                     .font(.arial(size: 12, weight: .bold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(hex: "579FCA"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color(hex: "B4DDF4"))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    Spacer()
                 }
-
-                Text(viewModel.dataPathText)
-                    .font(.arial(size: 10))
-                    .foregroundStyle(Color(hex: "666666"))
-
-                Text("步骤4：最近记录")
-                    .font(.arial(size: 12, weight: .bold))
-
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(hex: "FCFCFC"))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color(hex: "E7D8CC"), lineWidth: 1)
-                        }
-
-                    if viewModel.history.isEmpty {
-                        Text("暂无记录。完成一次弹窗选择后会显示在这里。")
-                            .font(.arial(size: 13))
-                            .foregroundStyle(Color(hex: "666666"))
-                    } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 6) {
-                                ForEach(viewModel.history) { record in
-                                    Text(viewModel.historyLine(for: record))
-                                        .font(.arial(size: 11))
-                                        .foregroundStyle(Color(hex: "1F1F1F"))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(Color.white)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                }
-                            }
-                            .padding(8)
-                        }
-                    }
-                }
-                .frame(maxHeight: .infinity)
-
-                Button("刷新记录") {
-                    viewModel.refreshHistory()
-                }
-                .buttonStyle(.plain)
-                .font(.arial(size: 12, weight: .bold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(Color(hex: "B4DDF4"))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .foregroundStyle(Color(hex: "1F1F1F"))
             }
-            .foregroundStyle(Color(hex: "1F1F1F"))
         }
-        .frame(width: 420)
+        .frame(width: 500)
     }
 
     private var statusBar: some View {
@@ -303,17 +411,17 @@ private struct HelpSheetView: View {
 
             Text("2. 设置提醒间隔")
                 .font(.arial(size: 14, weight: .bold))
-            Text("在右侧输入分钟数并保存，例如 20 表示每 20 分钟提醒一次。")
+            Text("设置基础间隔和最大间隔；开启智能间隔后，连续“正在完成”会逐步拉长提醒直到最大间隔。")
                 .font(.arial(size: 13))
 
-            Text("3. 弹窗反馈")
+            Text("3. 手机告警（可选）")
+                .font(.arial(size: 14, weight: .bold))
+            Text("填写 Server酱 SendKey。可选开启“工作时段限制”，仅在设定时段内监控空闲并推送。")
+                .font(.arial(size: 13))
+
+            Text("4. 弹窗反馈")
                 .font(.arial(size: 14, weight: .bold))
             Text("到时间会全屏弹窗，点击按钮或按键盘 1/2/3 选择当前状态。")
-                .font(.arial(size: 13))
-
-            Text("4. 查看记录")
-                .font(.arial(size: 14, weight: .bold))
-            Text("所有反馈会进入“最近记录”，便于追踪执行情况。")
                 .font(.arial(size: 13))
 
             Spacer()
@@ -327,7 +435,7 @@ private struct HelpSheetView: View {
             }
         }
         .padding(24)
-        .frame(width: 560, height: 420)
+        .frame(width: 620, height: 460)
         .background(Color(hex: "F6F2EE"))
     }
 }

@@ -20,6 +20,7 @@
 - Language: `Swift`
 - UI: `SwiftUI` + `AppKit`（全屏提醒窗口）
 - IDE: `Xcode`
+- Notification: `Server酱·Turbo`（微信推送）
 - ML: `Core ML`（已预留接口）
 - Python bridge: `Process` 调用本机 `python3`（已预留接口）
 - Tools: `Git`, `Homebrew`
@@ -38,17 +39,22 @@
 
 - 目标新增 / 删除 / 选择
 - 提醒间隔设置（分钟）
+- 智能间隔：连续多次选择“正在完成”时自动拉长提醒间隔，直到你设置的最大间隔
 - 定时全屏提醒弹窗（`1 已完成` / `2 正在完成` / `3 马上去完成`）
 - 已有未处理弹窗时，后续提醒自动跳过（不重复叠弹）
+- 电脑端空闲检测：鼠标/键盘连续无操作达到阈值（默认 20 分钟）时，自动触发手机告警
+- Server酱 微信推送：空闲达到阈值时自动推送到微信
+- 空闲推送工作时段限制：仅在指定时段内触发（支持跨午夜）
 - 历史记录追踪
 - 本地持久化存储
 
 ## 使用方案（推荐）
 
 1. 每天开始工作前，先添加 1~3 个当天最重要目标。
-2. 提醒间隔建议设置为 `10~30` 分钟（新习惯可先 10 分钟）。
+2. 提醒策略建议：基础间隔 `10~30` 分钟，最大间隔设为基础的 `1.5~3` 倍。
 3. 弹窗出现时，必须立刻做出一个选择，不跳过。
-4. 每天结束前看“最近记录”：
+4. 如需空闲微信提醒，开启工作时段限制（例如 `09:00-12:00`、`13:00-18:30` 这种主工作区间）。
+5. 每天结束前看“最近记录”：
    你会清楚看到自己是持续推进，还是频繁偏离。
 
 ## 快速开始
@@ -69,6 +75,19 @@
 
 - 不要直接点 `Contents/MacOS/GoalReminderApp`
 - 当前打包版本主要面向 Apple Silicon（M 系列）
+
+### 启用微信提醒（Server酱）
+
+1. 打开 [Server酱·Turbo](https://sct.ftqq.com/) 并登录
+2. 在控制台创建消息通道，拿到 `SendKey`（格式类似 `SCTxxxxxxxxxx`）
+3. 打开本应用，在“手机端告警”区域填入 `SendKey`
+4. 设定空闲阈值（默认 20 分钟），可选开启工作时段限制并填写 `HH:mm` 起止时间
+5. 点击“发送测试微信”确认你能收到提醒
+
+说明：
+
+- 这种方案不需要开发 iOS App，也不需要 Apple Developer 证书。
+- 微信通知是否显示横幅/声音，取决于你手机系统和微信通知设置。
 
 ### 本地源码运行
 
@@ -92,7 +111,7 @@ swift run GoalReminderApp
 - `Sources/GoalReminderApp/ViewModels`: 状态管理与调度逻辑
 - `Sources/GoalReminderApp/Views`: SwiftUI 主界面与提醒视图
 - `Sources/GoalReminderApp/Data`: 本地数据存储
-- `Sources/GoalReminderApp/Services`: Core ML / Python bridge / 全屏弹窗管理
+- `Sources/GoalReminderApp/Services`: Core ML / Python bridge / 全屏弹窗管理 / Server酱 推送
 - `assets/screenshots`: README 使用截图
 - `release`: 打包好的可执行 App 压缩包
 
@@ -108,3 +127,4 @@ swift run GoalReminderApp
 运行后数据保存在：
 
 - `~/Library/Application Support/GoalReminderSwift/state.json`
+- `~/Library/Application Support/GoalReminderSwift/mobile_push_config.json`
