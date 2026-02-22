@@ -78,9 +78,11 @@ struct ContentView: View {
                     .font(.arial(size: 12))
                 Text("2. 右侧设置基础间隔 + 最大间隔，开启智能调节")
                     .font(.arial(size: 12))
-                Text("3. 如需手机告警，填写 Server酱 SendKey，并可限定工作时段")
+                Text("3. 可选设置一个倒计时截止时间（会显示在全屏提醒里）")
                     .font(.arial(size: 12))
-                Text("4. 等待全屏弹窗，选择 已完成 / 正在完成 / 马上去完成")
+                Text("4. 如需手机告警，填写 Server酱 SendKey，并可限定工作时段")
+                    .font(.arial(size: 12))
+                Text("5. 等待全屏弹窗，选择 已完成 / 正在完成 / 马上去完成")
                     .font(.arial(size: 12))
             }
             .foregroundStyle(Color(hex: "1F1F1F"))
@@ -237,6 +239,28 @@ struct ContentView: View {
                         .font(.arial(size: 12))
                         .toggleStyle(.switch)
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("弹窗透明度（背景遮罩）")
+                                .font(.arial(size: 12))
+                            Spacer()
+                            Text("\(Int(viewModel.popupOpacityPercent))%")
+                                .font(.arial(size: 12, weight: .bold))
+                                .foregroundStyle(Color(hex: "579FCA"))
+                        }
+
+                        Slider(value: $viewModel.popupOpacityPercent, in: 15 ... 100, step: 1)
+                            .tint(Color(hex: "579FCA"))
+
+                        HStack {
+                            Text("更透明")
+                            Spacer()
+                            Text("更不透明")
+                        }
+                        .font(.arial(size: 10))
+                        .foregroundStyle(Color(hex: "666666"))
+                    }
+
                     Text(viewModel.effectiveIntervalText)
                         .font(.arial(size: 11))
                         .foregroundStyle(Color(hex: "666666"))
@@ -244,6 +268,54 @@ struct ContentView: View {
                     Text(viewModel.dataPathText)
                         .font(.arial(size: 10))
                         .foregroundStyle(Color(hex: "666666"))
+
+                    Divider()
+
+                    Text("倒计时（可选）")
+                        .font(.arial(size: 14, weight: .bold))
+
+                    Toggle("在全屏提醒中显示倒计时", isOn: $viewModel.countdownEnabled)
+                        .font(.arial(size: 12))
+                        .toggleStyle(.switch)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("截止日期时间")
+                            .font(.arial(size: 11))
+                        DatePicker(
+                            "",
+                            selection: $viewModel.countdownTargetDate,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .disabled(!viewModel.countdownEnabled)
+                    }
+
+                    Text(viewModel.countdownCompactText)
+                        .font(.arial(size: 11, weight: .bold))
+                        .foregroundStyle(Color(hex: "579FCA"))
+
+                    HStack(spacing: 8) {
+                        Button("保存倒计时") {
+                            viewModel.saveCountdown()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.arial(size: 12, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(hex: "B4DDF4"))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        Button("清除倒计时") {
+                            viewModel.clearCountdown()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.arial(size: 12, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(hex: "F3C7BF"))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
 
                     Divider()
 
@@ -387,6 +459,9 @@ struct ContentView: View {
                 Text(viewModel.nextReminderText)
                     .font(.arial(size: 12, weight: .bold))
                     .foregroundStyle(Color(hex: "1F1F1F"))
+                Text(viewModel.countdownCompactText)
+                    .font(.arial(size: 11, weight: .bold))
+                    .foregroundStyle(Color(hex: "579FCA"))
                 Text(viewModel.statusText)
                     .font(.arial(size: 11))
                     .foregroundStyle(Color(hex: "666666"))
@@ -414,12 +489,17 @@ private struct HelpSheetView: View {
             Text("设置基础间隔和最大间隔；开启智能间隔后，连续“正在完成”会逐步拉长提醒直到最大间隔。")
                 .font(.arial(size: 13))
 
-            Text("3. 手机告警（可选）")
+            Text("3. 倒计时（可选）")
+                .font(.arial(size: 14, weight: .bold))
+            Text("在右侧设置截止日期时间并保存。全屏提醒弹窗和底部状态栏都会显示剩余时间。")
+                .font(.arial(size: 13))
+
+            Text("4. 手机告警（可选）")
                 .font(.arial(size: 14, weight: .bold))
             Text("填写 Server酱 SendKey。可选开启“工作时段限制”，仅在设定时段内监控空闲并推送。")
                 .font(.arial(size: 13))
 
-            Text("4. 弹窗反馈")
+            Text("5. 弹窗反馈")
                 .font(.arial(size: 14, weight: .bold))
             Text("到时间会全屏弹窗，点击按钮或按键盘 1/2/3 选择当前状态。")
                 .font(.arial(size: 13))
@@ -435,7 +515,7 @@ private struct HelpSheetView: View {
             }
         }
         .padding(24)
-        .frame(width: 620, height: 460)
+        .frame(width: 640, height: 520)
         .background(Color(hex: "F6F2EE"))
     }
 }

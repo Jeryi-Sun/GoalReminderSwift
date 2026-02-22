@@ -16,6 +16,7 @@ final class ReminderViewModel: ObservableObject {
     @Published var intervalText = "30.00"
     @Published var maxIntervalText = "60.00"
     @Published var adaptiveIntervalEnabled = false
+    @Published var popupOpacityPercent = 88.0
     @Published var effectiveIntervalText = "当前有效间隔: --"
     @Published var nextReminderText = "下次提醒: --"
     @Published var statusText = "状态: 就绪"
@@ -31,6 +32,9 @@ final class ReminderViewModel: ObservableObject {
     @Published var mobileAlertBody = "你已经 20 分钟没有操作电脑，是否偏离目标了？"
     @Published var mobileConfigPathText = "微信推送配置: --"
     @Published var currentIdleStateText = "当前空闲: --"
+    @Published var countdownEnabled = false
+    @Published var countdownTargetDate = Date().addingTimeInterval(24 * 60 * 60)
+    @Published var countdownCompactText = "倒计时: 未设置"
 
     @Published var showingHelpSheet = false
     @Published var alertItem: AlertItem?
@@ -45,12 +49,14 @@ final class ReminderViewModel: ObservableObject {
 
     private var schedulerTask: Task<Void, Never>?
     private var idleMonitorTask: Task<Void, Never>?
+    private var countdownTickerTask: Task<Void, Never>?
     private var hasStarted = false
     private var popupLocked = false
     private var idlePushSentForCurrentIdlePeriod = false
     private var baseIntervalMinutes = 30.0
     private var maxIntervalMinutes = 60.0
     private var adaptivePolicyEnabled = false
+    private var popupOverlayOpacity = 0.88
     private var effectiveIntervalMinutes = 30.0
     private var consecutiveInProgressCount = 0
 
@@ -89,6 +95,7 @@ final class ReminderViewModel: ObservableObject {
     deinit {
         schedulerTask?.cancel()
         idleMonitorTask?.cancel()
+        countdownTickerTask?.cancel()
     }
 
     func onAppear() {
@@ -102,6 +109,7 @@ final class ReminderViewModel: ObservableObject {
             await loadMobilePushConfig()
             restartScheduler()
             restartIdleWatcher()
+            restartCountdownTicker()
             if goals.isEmpty {
                 setStatus("先添加至少一个目标，然后设置提醒间隔。")
                 showingHelpSheet = true
@@ -169,15 +177,19 @@ final class ReminderViewModel: ObservableObject {
 
         Task { @MainActor in
             do {
+                let popupOpacity = Self.clampedPopupOverlayOpacity(popupOpacityPercent / 100.0)
                 try await store.setReminderPolicy(
                     baseMinutes: baseMinutes,
                     maxMinutes: maxMinutes,
-                    adaptiveEnabled: adaptiveIntervalEnabled
+                    adaptiveEnabled: adaptiveIntervalEnabled,
+                    popupOverlayOpacity: popupOpacity
                 )
                 await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: false)
                 resetAdaptiveRuntime()
                 restartScheduler()
-                setStatus("提醒策略已更新：基础 \(Self.formatNumber(baseIntervalMinutes)) 分钟，最大 \(Self.formatNumber(maxIntervalMinutes)) 分钟。")
+                setStatus(
+                    "提醒策略已更新：基础 \(Self.formatNumber(baseIntervalMinutes)) 分钟，最大 \(Self.formatNumber(maxIntervalMinutes)) 分钟，弹窗透明度 \(Int((popupOverlayOpacity * 100).rounded()))%。"
+                )
             } catch {
                 handleError(error, title: "设置失败")
             }
@@ -206,6 +218,38 @@ final class ReminderViewModel: ObservableObject {
                 setStatus("手机推送配置已保存。")
             } catch {
                 handleError(error, title: "保存手机推送配置失败")
+            }
+        }
+    }
+
+    func saveCountdown() {
+        let targetDate = countdownEnabled ? countdownTargetDate : nil
+
+        Task { @MainActor in
+            do {
+                try await store.setCountdownTargetDate(targetDate)
+                await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: true)
+                if let targetDate {
+                    setStatus("倒计时已保存：截止 \(Self.historyFormatter.string(from: targetDate))")
+                } else {
+                    setStatus("倒计时已关闭。")
+                }
+            } catch {
+                handleError(error, title: "保存倒计时失败")
+            }
+        }
+    }
+
+    func clearCountdown() {
+        countdownEnabled = false
+        updateCountdownCompactText()
+        Task { @MainActor in
+            do {
+                try await store.setCountdownTargetDate(nil)
+                await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: true)
+                setStatus("倒计时已清除。")
+            } catch {
+                handleError(error, title: "清除倒计时失败")
             }
         }
     }
@@ -394,7 +438,11 @@ final class ReminderViewModel: ObservableObject {
         }
 
         popupLocked = true
-        let shown = popupManager.present(goal: goal) { [weak self] status in
+        let shown = popupManager.present(
+            goal: goal,
+            countdownText: popupCountdownText(),
+            overlayOpacity: popupOverlayOpacity
+        ) { [weak self] status in
             guard let self else {
                 return
             }
@@ -478,10 +526,12 @@ final class ReminderViewModel: ObservableObject {
         baseIntervalMinutes = snapshot.intervalMinutes
         maxIntervalMinutes = max(snapshot.maxIntervalMinutes, baseIntervalMinutes)
         adaptivePolicyEnabled = snapshot.adaptiveIntervalEnabled
+        popupOverlayOpacity = Self.clampedPopupOverlayOpacity(snapshot.popupOverlayOpacity)
         if !keepCurrentIntervalInput {
             intervalText = Self.formatNumber(baseIntervalMinutes)
             maxIntervalText = Self.formatNumber(maxIntervalMinutes)
             adaptiveIntervalEnabled = adaptivePolicyEnabled
+            popupOpacityPercent = (popupOverlayOpacity * 100).rounded()
         }
         if !adaptivePolicyEnabled {
             effectiveIntervalMinutes = baseIntervalMinutes
@@ -490,6 +540,15 @@ final class ReminderViewModel: ObservableObject {
             effectiveIntervalMinutes = min(maxIntervalMinutes, max(effectiveIntervalMinutes, baseIntervalMinutes))
         }
         effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
+
+        if let targetDate = snapshot.countdownTargetDate {
+            countdownEnabled = true
+            countdownTargetDate = targetDate
+        } else {
+            countdownEnabled = false
+            countdownTargetDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date().addingTimeInterval(24 * 60 * 60)
+        }
+        updateCountdownCompactText()
 
         if let preserveSelection,
            goals.contains(where: { $0.id == preserveSelection }) {
@@ -540,6 +599,44 @@ final class ReminderViewModel: ObservableObject {
             }
             return nil
         }
+    }
+
+    private func restartCountdownTicker() {
+        countdownTickerTask?.cancel()
+        countdownTickerTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            updateCountdownCompactText()
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    break
+                }
+                updateCountdownCompactText()
+            }
+        }
+    }
+
+    private func popupCountdownText() -> String? {
+        guard let targetDate = activeCountdownTargetDate() else {
+            return nil
+        }
+        return Self.countdownPopupText(targetDate: targetDate, now: Date())
+    }
+
+    private func activeCountdownTargetDate() -> Date? {
+        countdownEnabled ? countdownTargetDate : nil
+    }
+
+    private func updateCountdownCompactText() {
+        guard let targetDate = activeCountdownTargetDate() else {
+            countdownCompactText = "倒计时: 未设置"
+            return
+        }
+        countdownCompactText = Self.countdownCompactText(targetDate: targetDate, now: Date())
     }
 
     private func isWithinWorkTime(config: MobilePushConfig) -> Bool {
@@ -594,5 +691,33 @@ final class ReminderViewModel: ObservableObject {
 
     private static func formatNumber(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+
+    private static func clampedPopupOverlayOpacity(_ value: Double) -> Double {
+        min(max(value, 0.15), 1.0)
+    }
+
+    private static func countdownCompactText(targetDate: Date, now: Date) -> String {
+        let delta = targetDate.timeIntervalSince(now)
+        if delta >= 0 {
+            return "倒计时: 还剩 \(countdownDurationText(seconds: delta))"
+        }
+        return "倒计时: 已到期 \(countdownDurationText(seconds: abs(delta)))"
+    }
+
+    private static func countdownPopupText(targetDate: Date, now: Date) -> String {
+        let delta = targetDate.timeIntervalSince(now)
+        if delta >= 0 {
+            return "倒计时：还剩 \(countdownDurationText(seconds: delta))"
+        }
+        return "倒计时：已到期 \(countdownDurationText(seconds: abs(delta)))"
+    }
+
+    private static func countdownDurationText(seconds: TimeInterval) -> String {
+        let totalMinutes = max(Int(ceil(seconds / 60.0)), 0)
+        let days = totalMinutes / (24 * 60)
+        let hours = (totalMinutes % (24 * 60)) / 60
+        let minutes = totalMinutes % 60
+        return "\(days)天 \(hours)小时 \(minutes) min"
     }
 }

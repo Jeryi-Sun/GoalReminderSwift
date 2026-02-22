@@ -2,6 +2,7 @@ import Foundation
 
 actor AppDataStore {
     private static let minIntervalMinutes = 5.0 / 60.0
+    private static let minPopupOverlayOpacity = 0.15
     private static let maxHistoryCount = 500
 
     private let fileURL: URL
@@ -17,6 +18,7 @@ actor AppDataStore {
         self.state = Self.loadState(from: fileURL) ?? AppState()
         self.state.intervalMinutes = max(self.state.intervalMinutes, Self.minIntervalMinutes)
         self.state.maxIntervalMinutes = max(self.state.maxIntervalMinutes, self.state.intervalMinutes)
+        self.state.popupOverlayOpacity = Self.clampedPopupOverlayOpacity(self.state.popupOverlayOpacity)
     }
 
     func dataFilePath() -> String {
@@ -43,7 +45,8 @@ actor AppDataStore {
     func setReminderPolicy(
         baseMinutes: Double,
         maxMinutes: Double,
-        adaptiveEnabled: Bool
+        adaptiveEnabled: Bool,
+        popupOverlayOpacity: Double
     ) throws {
         guard baseMinutes > 0 else {
             throw AppError.invalidInterval
@@ -56,6 +59,12 @@ actor AppDataStore {
         state.intervalMinutes = safeBase
         state.maxIntervalMinutes = maxMinutes
         state.adaptiveIntervalEnabled = adaptiveEnabled
+        state.popupOverlayOpacity = Self.clampedPopupOverlayOpacity(popupOverlayOpacity)
+        try persist()
+    }
+
+    func setCountdownTargetDate(_ date: Date?) throws {
+        state.countdownTargetDate = date
         try persist()
     }
 
@@ -130,5 +139,9 @@ actor AppDataStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(AppState.self, from: data)
+    }
+
+    private static func clampedPopupOverlayOpacity(_ value: Double) -> Double {
+        min(max(value, minPopupOverlayOpacity), 1.0)
     }
 }

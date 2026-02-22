@@ -61,6 +61,8 @@ struct AppState: Codable {
     var intervalMinutes: Double
     var maxIntervalMinutes: Double
     var adaptiveIntervalEnabled: Bool
+    var popupOverlayOpacity: Double
+    var countdownTargetDate: Date?
     var goals: [Goal]
     var nextGoalIndex: Int
     var history: [ReminderRecord]
@@ -69,6 +71,8 @@ struct AppState: Codable {
         intervalMinutes: Double = 30,
         maxIntervalMinutes: Double = 60,
         adaptiveIntervalEnabled: Bool = false,
+        popupOverlayOpacity: Double = 0.88,
+        countdownTargetDate: Date? = nil,
         goals: [Goal] = [],
         nextGoalIndex: Int = 0,
         history: [ReminderRecord] = []
@@ -76,6 +80,8 @@ struct AppState: Codable {
         self.intervalMinutes = intervalMinutes
         self.maxIntervalMinutes = max(maxIntervalMinutes, intervalMinutes)
         self.adaptiveIntervalEnabled = adaptiveIntervalEnabled
+        self.popupOverlayOpacity = min(max(popupOverlayOpacity, 0.15), 1.0)
+        self.countdownTargetDate = countdownTargetDate
         self.goals = goals
         self.nextGoalIndex = nextGoalIndex
         self.history = history
@@ -85,6 +91,8 @@ struct AppState: Codable {
         case intervalMinutes
         case maxIntervalMinutes
         case adaptiveIntervalEnabled
+        case popupOverlayOpacity
+        case countdownTargetDate
         case goals
         case nextGoalIndex
         case history
@@ -97,6 +105,9 @@ struct AppState: Codable {
         intervalMinutes = interval
         maxIntervalMinutes = max(maxInterval, interval)
         adaptiveIntervalEnabled = try container.decodeIfPresent(Bool.self, forKey: .adaptiveIntervalEnabled) ?? false
+        let decodedOpacity = try container.decodeIfPresent(Double.self, forKey: .popupOverlayOpacity) ?? 0.88
+        popupOverlayOpacity = min(max(decodedOpacity, 0.15), 1.0)
+        countdownTargetDate = try container.decodeIfPresent(Date.self, forKey: .countdownTargetDate)
         goals = try container.decodeIfPresent([Goal].self, forKey: .goals) ?? []
         nextGoalIndex = try container.decodeIfPresent(Int.self, forKey: .nextGoalIndex) ?? 0
         history = try container.decodeIfPresent([ReminderRecord].self, forKey: .history) ?? []

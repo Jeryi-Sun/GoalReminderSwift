@@ -2,11 +2,15 @@ import SwiftUI
 
 struct ReminderPopupView: View {
     let goalTitle: String
+    let countdownText: String?
+    let overlayOpacity: Double
     let onSelect: (GoalProgressStatus) -> Void
 
     var body: some View {
         ZStack {
-            Color(hex: "FAE6D7").ignoresSafeArea()
+            Color(hex: "FAE6D7")
+                .opacity(clampedOverlayOpacity)
+                .ignoresSafeArea()
 
             VStack(spacing: 24) {
                 Text("目标提醒")
@@ -23,6 +27,14 @@ struct ReminderPopupView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
 
+                if let countdownText, !countdownText.isEmpty {
+                    Text(countdownText)
+                        .font(.arial(size: 20, weight: .semibold))
+                        .foregroundStyle(Color(hex: "579FCA"))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+
                 Text("快捷键: 1 / 2 / 3")
                     .font(.arial(size: 16))
                     .foregroundStyle(Color(hex: "666666"))
@@ -36,7 +48,7 @@ struct ReminderPopupView: View {
             }
             .frame(maxWidth: 1200)
             .padding(40)
-            .background(Color.white.opacity(0.9))
+            .background(Color.white.opacity(cardOpacity))
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -44,6 +56,14 @@ struct ReminderPopupView: View {
             }
             .padding(40)
         }
+    }
+
+    private var clampedOverlayOpacity: Double {
+        min(max(overlayOpacity, 0.15), 1.0)
+    }
+
+    private var cardOpacity: Double {
+        max(0.82, min(0.96, clampedOverlayOpacity + 0.10))
     }
 
     private func popupButton(for status: GoalProgressStatus, color: Color) -> some View {
