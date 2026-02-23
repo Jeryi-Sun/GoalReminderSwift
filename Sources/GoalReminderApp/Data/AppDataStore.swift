@@ -2,6 +2,7 @@ import Foundation
 
 actor AppDataStore {
     private static let minIntervalMinutes = 5.0 / 60.0
+    private static let minAdaptiveStepMinutes = 5.0 / 60.0
     private static let minPopupOverlayOpacity = 0.15
     private static let maxHistoryCount = 500
 
@@ -17,7 +18,19 @@ actor AppDataStore {
         self.fileURL = folderURL.appendingPathComponent("state.json")
         self.state = Self.loadState(from: fileURL) ?? AppState()
         self.state.intervalMinutes = max(self.state.intervalMinutes, Self.minIntervalMinutes)
+        self.state.minIntervalMinutes = min(
+            max(self.state.minIntervalMinutes, Self.minIntervalMinutes),
+            self.state.intervalMinutes
+        )
         self.state.maxIntervalMinutes = max(self.state.maxIntervalMinutes, self.state.intervalMinutes)
+        self.state.adaptiveInProgressStepMinutes = max(
+            self.state.adaptiveInProgressStepMinutes,
+            Self.minAdaptiveStepMinutes
+        )
+        self.state.adaptiveStartNowStepMinutes = max(
+            self.state.adaptiveStartNowStepMinutes,
+            Self.minAdaptiveStepMinutes
+        )
         self.state.popupOverlayOpacity = Self.clampedPopupOverlayOpacity(self.state.popupOverlayOpacity)
     }
 
@@ -44,21 +57,40 @@ actor AppDataStore {
 
     func setReminderPolicy(
         baseMinutes: Double,
+        minMinutes: Double,
         maxMinutes: Double,
         adaptiveEnabled: Bool,
+        adaptiveInProgressStepMinutes: Double,
+        adaptiveStartNowStepMinutes: Double,
         popupOverlayOpacity: Double
     ) throws {
         guard baseMinutes > 0 else {
             throw AppError.invalidInterval
         }
+        guard minMinutes > 0 else {
+            throw AppError.invalidMinInterval
+        }
         let safeBase = max(baseMinutes, Self.minIntervalMinutes)
+        let safeMin = max(minMinutes, Self.minIntervalMinutes)
+        guard safeMin <= safeBase else {
+            throw AppError.invalidMinInterval
+        }
         guard maxMinutes >= safeBase else {
             throw AppError.invalidMaxInterval
         }
+        guard adaptiveInProgressStepMinutes > 0 else {
+            throw AppError.invalidAdaptiveStep("“正在完成”步长必须大于 0")
+        }
+        guard adaptiveStartNowStepMinutes > 0 else {
+            throw AppError.invalidAdaptiveStep("“马上去完成”步长必须大于 0")
+        }
 
         state.intervalMinutes = safeBase
+        state.minIntervalMinutes = safeMin
         state.maxIntervalMinutes = maxMinutes
         state.adaptiveIntervalEnabled = adaptiveEnabled
+        state.adaptiveInProgressStepMinutes = max(adaptiveInProgressStepMinutes, Self.minAdaptiveStepMinutes)
+        state.adaptiveStartNowStepMinutes = max(adaptiveStartNowStepMinutes, Self.minAdaptiveStepMinutes)
         state.popupOverlayOpacity = Self.clampedPopupOverlayOpacity(popupOverlayOpacity)
         try persist()
     }

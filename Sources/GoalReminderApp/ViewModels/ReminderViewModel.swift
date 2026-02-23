@@ -14,8 +14,11 @@ final class ReminderViewModel: ObservableObject {
 
     @Published var newGoalTitle = ""
     @Published var intervalText = "30.00"
+    @Published var minIntervalText = "5.00"
     @Published var maxIntervalText = "60.00"
     @Published var adaptiveIntervalEnabled = false
+    @Published var adaptiveInProgressStepText = "5.00"
+    @Published var adaptiveStartNowStepText = "5.00"
     @Published var popupOpacityPercent = 88.0
     @Published var effectiveIntervalText = "当前有效间隔: --"
     @Published var nextReminderText = "下次提醒: --"
@@ -54,11 +57,15 @@ final class ReminderViewModel: ObservableObject {
     private var popupLocked = false
     private var idlePushSentForCurrentIdlePeriod = false
     private var baseIntervalMinutes = 30.0
+    private var minIntervalMinutes = 5.0
     private var maxIntervalMinutes = 60.0
     private var adaptivePolicyEnabled = false
+    private var adaptiveInProgressStepMinutes = 5.0
+    private var adaptiveStartNowStepMinutes = 5.0
     private var popupOverlayOpacity = 0.88
     private var effectiveIntervalMinutes = 30.0
     private var consecutiveInProgressCount = 0
+    private var consecutiveStartNowCount = 0
 
     private static let minIntervalSeconds = 5.0
 
@@ -160,14 +167,33 @@ final class ReminderViewModel: ObservableObject {
 
     func saveInterval() {
         let baseRaw = intervalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let minRaw = minIntervalText.trimmingCharacters(in: .whitespacesAndNewlines)
         let maxRaw = maxIntervalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inProgressStepRaw = adaptiveInProgressStepText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startNowStepRaw = adaptiveStartNowStepText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let baseMinutes = Double(baseRaw), baseMinutes > 0 else {
             handleError(AppError.invalidInterval, title: "设置失败")
             return
         }
+        guard let minMinutes = Double(minRaw), minMinutes > 0 else {
+            handleError(AppError.invalidMinInterval, title: "设置失败")
+            return
+        }
         guard let maxMinutes = Double(maxRaw), maxMinutes > 0 else {
             handleError(AppError.invalidMaxInterval, title: "设置失败")
+            return
+        }
+        guard let inProgressStep = Double(inProgressStepRaw), inProgressStep > 0 else {
+            handleError(AppError.invalidAdaptiveStep("“正在完成”步长必须大于 0"), title: "设置失败")
+            return
+        }
+        guard let startNowStep = Double(startNowStepRaw), startNowStep > 0 else {
+            handleError(AppError.invalidAdaptiveStep("“马上去完成”步长必须大于 0"), title: "设置失败")
+            return
+        }
+        guard minMinutes <= baseMinutes else {
+            handleError(AppError.invalidMinInterval, title: "设置失败")
             return
         }
         guard maxMinutes >= baseMinutes else {
@@ -180,15 +206,18 @@ final class ReminderViewModel: ObservableObject {
                 let popupOpacity = Self.clampedPopupOverlayOpacity(popupOpacityPercent / 100.0)
                 try await store.setReminderPolicy(
                     baseMinutes: baseMinutes,
+                    minMinutes: minMinutes,
                     maxMinutes: maxMinutes,
                     adaptiveEnabled: adaptiveIntervalEnabled,
+                    adaptiveInProgressStepMinutes: inProgressStep,
+                    adaptiveStartNowStepMinutes: startNowStep,
                     popupOverlayOpacity: popupOpacity
                 )
                 await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: false)
                 resetAdaptiveRuntime()
                 restartScheduler()
                 setStatus(
-                    "提醒策略已更新：基础 \(Self.formatNumber(baseIntervalMinutes)) 分钟，最大 \(Self.formatNumber(maxIntervalMinutes)) 分钟，弹窗透明度 \(Int((popupOverlayOpacity * 100).rounded()))%。"
+                    "提醒策略已更新：最小 \(Self.formatNumber(minIntervalMinutes)) / 基础 \(Self.formatNumber(baseIntervalMinutes)) / 最大 \(Self.formatNumber(maxIntervalMinutes)) 分钟；步长(进行中+\(Self.formatNumber(adaptiveInProgressStepMinutes))、马上去完成-\(Self.formatNumber(adaptiveStartNowStepMinutes)))；弹窗透明度 \(Int((popupOverlayOpacity * 100).rounded()))%。"
                 )
             } catch {
                 handleError(error, title: "设置失败")
@@ -524,20 +553,27 @@ final class ReminderViewModel: ObservableObject {
         dataPathText = "数据文件: \(path)"
 
         baseIntervalMinutes = snapshot.intervalMinutes
+        minIntervalMinutes = min(snapshot.minIntervalMinutes, baseIntervalMinutes)
         maxIntervalMinutes = max(snapshot.maxIntervalMinutes, baseIntervalMinutes)
         adaptivePolicyEnabled = snapshot.adaptiveIntervalEnabled
+        adaptiveInProgressStepMinutes = snapshot.adaptiveInProgressStepMinutes
+        adaptiveStartNowStepMinutes = snapshot.adaptiveStartNowStepMinutes
         popupOverlayOpacity = Self.clampedPopupOverlayOpacity(snapshot.popupOverlayOpacity)
         if !keepCurrentIntervalInput {
             intervalText = Self.formatNumber(baseIntervalMinutes)
+            minIntervalText = Self.formatNumber(minIntervalMinutes)
             maxIntervalText = Self.formatNumber(maxIntervalMinutes)
             adaptiveIntervalEnabled = adaptivePolicyEnabled
+            adaptiveInProgressStepText = Self.formatNumber(adaptiveInProgressStepMinutes)
+            adaptiveStartNowStepText = Self.formatNumber(adaptiveStartNowStepMinutes)
             popupOpacityPercent = (popupOverlayOpacity * 100).rounded()
         }
         if !adaptivePolicyEnabled {
             effectiveIntervalMinutes = baseIntervalMinutes
             consecutiveInProgressCount = 0
+            consecutiveStartNowCount = 0
         } else {
-            effectiveIntervalMinutes = min(maxIntervalMinutes, max(effectiveIntervalMinutes, baseIntervalMinutes))
+            effectiveIntervalMinutes = min(maxIntervalMinutes, max(effectiveIntervalMinutes, minIntervalMinutes))
         }
         effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
 
@@ -563,12 +599,13 @@ final class ReminderViewModel: ObservableObject {
         if !adaptivePolicyEnabled {
             effectiveIntervalMinutes = baseIntervalMinutes
         }
-        effectiveIntervalMinutes = min(maxIntervalMinutes, max(baseIntervalMinutes, effectiveIntervalMinutes))
+        effectiveIntervalMinutes = min(maxIntervalMinutes, max(minIntervalMinutes, effectiveIntervalMinutes))
         return effectiveIntervalMinutes
     }
 
     private func resetAdaptiveRuntime() {
         consecutiveInProgressCount = 0
+        consecutiveStartNowCount = 0
         effectiveIntervalMinutes = baseIntervalMinutes
         effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
     }
@@ -582,16 +619,30 @@ final class ReminderViewModel: ObservableObject {
         switch status {
         case .inProgress:
             consecutiveInProgressCount += 1
+            consecutiveStartNowCount = 0
             let oldValue = effectiveIntervalMinutes
-            let step = max(baseIntervalMinutes * 0.15, 0.5)
-            effectiveIntervalMinutes = min(maxIntervalMinutes, oldValue + step)
+            let step = max(adaptiveInProgressStepMinutes, Self.minIntervalSeconds / 60.0)
+            effectiveIntervalMinutes = min(maxIntervalMinutes, max(minIntervalMinutes, oldValue + step))
             effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
 
             if abs(effectiveIntervalMinutes - oldValue) < 0.001 {
                 return "连续 \(consecutiveInProgressCount) 次“正在完成”，已达到最大间隔 \(Self.formatNumber(maxIntervalMinutes)) 分钟"
             }
             return "连续 \(consecutiveInProgressCount) 次“正在完成”，间隔调整为 \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
-        case .completed, .startNow:
+        case .startNow:
+            consecutiveStartNowCount += 1
+            consecutiveInProgressCount = 0
+            let oldValue = effectiveIntervalMinutes
+            let step = max(adaptiveStartNowStepMinutes, Self.minIntervalSeconds / 60.0)
+            let targetValue = baseIntervalMinutes - (Double(consecutiveStartNowCount) * step)
+            effectiveIntervalMinutes = max(minIntervalMinutes, min(maxIntervalMinutes, targetValue))
+            effectiveIntervalText = "当前有效间隔: \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
+
+            if abs(effectiveIntervalMinutes - oldValue) < 0.001 {
+                return "连续 \(consecutiveStartNowCount) 次“马上去完成”，已达到最小间隔 \(Self.formatNumber(minIntervalMinutes)) 分钟"
+            }
+            return "连续 \(consecutiveStartNowCount) 次“马上去完成”，提醒加快到 \(Self.formatNumber(effectiveIntervalMinutes)) 分钟"
+        case .completed:
             let shouldReset = consecutiveInProgressCount > 0 || abs(effectiveIntervalMinutes - baseIntervalMinutes) > 0.001
             resetAdaptiveRuntime()
             if shouldReset {

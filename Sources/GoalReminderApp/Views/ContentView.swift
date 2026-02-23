@@ -6,7 +6,6 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 12) {
             header
-            quickStart
             bodySection
             statusBar
         }
@@ -65,27 +64,6 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
             }
-        }
-    }
-
-    private var quickStart: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("快速开始（30秒）")
-                    .font(.arial(size: 16, weight: .bold))
-                    .foregroundStyle(Color(hex: "1F1F1F"))
-                Text("1. 左侧输入目标并点击添加")
-                    .font(.arial(size: 12))
-                Text("2. 右侧设置基础间隔 + 最大间隔，开启智能调节")
-                    .font(.arial(size: 12))
-                Text("3. 可选设置一个倒计时截止时间（会显示在全屏提醒里）")
-                    .font(.arial(size: 12))
-                Text("4. 如需手机告警，填写 Server酱 SendKey，并可限定工作时段")
-                    .font(.arial(size: 12))
-                Text("5. 等待全屏弹窗，选择 已完成 / 正在完成 / 马上去完成")
-                    .font(.arial(size: 12))
-            }
-            .foregroundStyle(Color(hex: "1F1F1F"))
         }
     }
 
@@ -205,6 +183,15 @@ struct ContentView: View {
 
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
+                            Text("最小间隔")
+                                .font(.arial(size: 11))
+                            TextField("5", text: $viewModel.minIntervalText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.arial(size: 13))
+                                .frame(width: 90)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
                             Text("基础间隔")
                                 .font(.arial(size: 11))
                             TextField("30", text: $viewModel.intervalText)
@@ -235,9 +222,31 @@ struct ContentView: View {
                         Spacer()
                     }
 
-                    Toggle("启用智能间隔（连续“正在完成”会逐步拉长提醒）", isOn: $viewModel.adaptiveIntervalEnabled)
+                    Toggle("启用智能间隔（“正在完成”拉长间隔，“马上去完成”缩短间隔）", isOn: $viewModel.adaptiveIntervalEnabled)
                         .font(.arial(size: 12))
                         .toggleStyle(.switch)
+
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("进行中步长(+分钟)")
+                                .font(.arial(size: 11))
+                            TextField("5", text: $viewModel.adaptiveInProgressStepText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.arial(size: 13))
+                                .frame(width: 140)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("马上去完成步长(-分钟)")
+                                .font(.arial(size: 11))
+                            TextField("5", text: $viewModel.adaptiveStartNowStepText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.arial(size: 13))
+                                .frame(width: 160)
+                        }
+
+                        Spacer()
+                    }
 
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -486,7 +495,7 @@ private struct HelpSheetView: View {
 
             Text("2. 设置提醒间隔")
                 .font(.arial(size: 14, weight: .bold))
-            Text("设置基础间隔和最大间隔；开启智能间隔后，连续“正在完成”会逐步拉长提醒直到最大间隔。")
+            Text("设置最小/基础/最大间隔；开启智能间隔后，可分别设置“正在完成”拉长步长与“马上去完成”缩短步长。")
                 .font(.arial(size: 13))
 
             Text("3. 倒计时（可选）")

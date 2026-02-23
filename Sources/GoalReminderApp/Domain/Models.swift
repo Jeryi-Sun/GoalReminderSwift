@@ -59,8 +59,11 @@ struct ReminderRecord: Identifiable, Codable, Hashable {
 
 struct AppState: Codable {
     var intervalMinutes: Double
+    var minIntervalMinutes: Double
     var maxIntervalMinutes: Double
     var adaptiveIntervalEnabled: Bool
+    var adaptiveInProgressStepMinutes: Double
+    var adaptiveStartNowStepMinutes: Double
     var popupOverlayOpacity: Double
     var countdownTargetDate: Date?
     var goals: [Goal]
@@ -69,8 +72,11 @@ struct AppState: Codable {
 
     init(
         intervalMinutes: Double = 30,
+        minIntervalMinutes: Double = 5,
         maxIntervalMinutes: Double = 60,
         adaptiveIntervalEnabled: Bool = false,
+        adaptiveInProgressStepMinutes: Double = 5,
+        adaptiveStartNowStepMinutes: Double = 5,
         popupOverlayOpacity: Double = 0.88,
         countdownTargetDate: Date? = nil,
         goals: [Goal] = [],
@@ -78,8 +84,11 @@ struct AppState: Codable {
         history: [ReminderRecord] = []
     ) {
         self.intervalMinutes = intervalMinutes
+        self.minIntervalMinutes = max(5.0 / 60.0, min(minIntervalMinutes, intervalMinutes))
         self.maxIntervalMinutes = max(maxIntervalMinutes, intervalMinutes)
         self.adaptiveIntervalEnabled = adaptiveIntervalEnabled
+        self.adaptiveInProgressStepMinutes = max(5.0 / 60.0, adaptiveInProgressStepMinutes)
+        self.adaptiveStartNowStepMinutes = max(5.0 / 60.0, adaptiveStartNowStepMinutes)
         self.popupOverlayOpacity = min(max(popupOverlayOpacity, 0.15), 1.0)
         self.countdownTargetDate = countdownTargetDate
         self.goals = goals
@@ -89,8 +98,11 @@ struct AppState: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case intervalMinutes
+        case minIntervalMinutes
         case maxIntervalMinutes
         case adaptiveIntervalEnabled
+        case adaptiveInProgressStepMinutes
+        case adaptiveStartNowStepMinutes
         case popupOverlayOpacity
         case countdownTargetDate
         case goals
@@ -102,9 +114,20 @@ struct AppState: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let interval = try container.decodeIfPresent(Double.self, forKey: .intervalMinutes) ?? 30
         let maxInterval = try container.decodeIfPresent(Double.self, forKey: .maxIntervalMinutes) ?? max(60, interval)
+        let minInterval = try container.decodeIfPresent(Double.self, forKey: .minIntervalMinutes) ?? min(5, interval)
+        let defaultAdaptiveStep = max(interval * 0.15, 0.5)
         intervalMinutes = interval
+        minIntervalMinutes = max(5.0 / 60.0, min(minInterval, interval))
         maxIntervalMinutes = max(maxInterval, interval)
         adaptiveIntervalEnabled = try container.decodeIfPresent(Bool.self, forKey: .adaptiveIntervalEnabled) ?? false
+        adaptiveInProgressStepMinutes = max(
+            5.0 / 60.0,
+            try container.decodeIfPresent(Double.self, forKey: .adaptiveInProgressStepMinutes) ?? defaultAdaptiveStep
+        )
+        adaptiveStartNowStepMinutes = max(
+            5.0 / 60.0,
+            try container.decodeIfPresent(Double.self, forKey: .adaptiveStartNowStepMinutes) ?? defaultAdaptiveStep
+        )
         let decodedOpacity = try container.decodeIfPresent(Double.self, forKey: .popupOverlayOpacity) ?? 0.88
         popupOverlayOpacity = min(max(decodedOpacity, 0.15), 1.0)
         countdownTargetDate = try container.decodeIfPresent(Date.self, forKey: .countdownTargetDate)
@@ -178,11 +201,13 @@ struct MobilePushConfig: Codable, Sendable {
 enum AppError: LocalizedError {
     case emptyGoal
     case invalidInterval
+    case invalidMinInterval
     case noGoalSelected
     case noGoalsAvailable
     case goalNotFound
     case pythonBridgeFailed(String)
     case invalidMaxInterval
+    case invalidAdaptiveStep(String)
     case invalidServerChanConfig(String)
     case serverChanSendFailed(String)
 
@@ -192,6 +217,8 @@ enum AppError: LocalizedError {
             return "目标内容不能为空。"
         case .invalidInterval:
             return "提醒间隔必须是大于 0 的数字。"
+        case .invalidMinInterval:
+            return "最小提醒间隔必须大于 0，且不能大于基础间隔。"
         case .noGoalSelected:
             return "请先选择一个目标。"
         case .noGoalsAvailable:
@@ -202,6 +229,8 @@ enum AppError: LocalizedError {
             return "Python bridge 执行失败：\(detail)"
         case .invalidMaxInterval:
             return "最大提醒间隔必须大于或等于基础间隔。"
+        case .invalidAdaptiveStep(let detail):
+            return "智能步长配置无效：\(detail)"
         case .invalidServerChanConfig(let detail):
             return "Server酱 配置无效：\(detail)"
         case .serverChanSendFailed(let detail):
