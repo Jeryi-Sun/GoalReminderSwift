@@ -5,6 +5,34 @@ actor AppDataStore {
     private static let minAdaptiveStepMinutes = 5.0 / 60.0
     private static let minPopupOverlayOpacity = 0.15
     private static let maxHistoryCount = 500
+    private static let dailyMarkdownRootURL = URL(
+        fileURLWithPath: "/Users/sunzhongxiang/.openclaw/workspace/daily_remainder",
+        isDirectory: true
+    )
+
+    private static let dailyTitleFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let dailyTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private static let dailyUpdatedAtFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
 
     private let fileURL: URL
     private var state: AppState
@@ -146,13 +174,19 @@ actor AppDataStore {
         return goal
     }
 
-    func appendRecord(goal: Goal, status: GoalProgressStatus) throws -> ReminderRecord {
-        let record = ReminderRecord(goalID: goal.id, goalTitle: goal.title, status: status)
+    func appendRecord(goal: Goal, status: GoalProgressStatus, startNowInput: String? = nil) throws -> ReminderRecord {
+        let record = ReminderRecord(
+            goalID: goal.id,
+            goalTitle: goal.title,
+            status: status,
+            startNowInput: startNowInput
+        )
         state.history.append(record)
         if state.history.count > Self.maxHistoryCount {
             state.history.removeFirst(state.history.count - Self.maxHistoryCount)
         }
         try persist()
+        try? syncDailyMarkdown(for: record.timestamp)
         return record
     }
 
@@ -175,5 +209,99 @@ actor AppDataStore {
 
     private static func clampedPopupOverlayOpacity(_ value: Double) -> Double {
         min(max(value, minPopupOverlayOpacity), 1.0)
+    }
+
+    private func syncDailyMarkdown(for date: Date) throws {
+        let records = dailyRecords(for: date)
+        let fileURL = Self.dailyMarkdownFileURL(for: date)
+        let folderURL = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+
+        let markdown = Self.dailyMarkdownContent(
+            for: date,
+            records: records,
+            filePath: fileURL.path
+        )
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    private func dailyRecords(for date: Date) -> [ReminderRecord] {
+        let calendar = Calendar(identifier: .gregorian)
+        return state.history
+            .filter { calendar.isDate($0.timestamp, inSameDayAs: date) }
+            .sorted { $0.timestamp < $1.timestamp }
+    }
+
+    private static func dailyMarkdownFileURL(for date: Date) -> URL {
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        let year = String(components.year ?? 0)
+        let month = String(format: "%02d", components.month ?? 0)
+        let day = String(format: "%02d", components.day ?? 0)
+
+        return dailyMarkdownRootURL
+            .appendingPathComponent(year, isDirectory: true)
+            .appendingPathComponent(month, isDirectory: true)
+            .appendingPathComponent("\(day).md", isDirectory: false)
+    }
+
+    private static func dailyMarkdownContent(
+        for date: Date,
+        records: [ReminderRecord],
+        filePath: String
+    ) -> String {
+        let inProgressRecords = records.filter { $0.status == .inProgress }
+        let startNowRecords = records.filter { $0.status == .startNow }
+        let completedRecords = records.filter { $0.status == .completed }
+
+        let sections = [
+            "# \(dailyTitleFormatter.string(from: date)) 目标提醒日志",
+            "",
+            "> 路径：`\(filePath)`",
+            "> 最后更新：\(dailyUpdatedAtFormatter.string(from: Date()))",
+            "",
+            "## 当天统计",
+            "- 正在完成次数：\(inProgressRecords.count)",
+            "- 马上去完成次数：\(startNowRecords.count)",
+            "- 已完成次数：\(completedRecords.count)",
+            "",
+            "## 正在完成的任务情况",
+            markdownList(for: inProgressRecords, includeStartNowInput: false),
+            "",
+            "## 马上去完成",
+            "- 次数：\(startNowRecords.count)",
+            markdownList(for: startNowRecords, includeStartNowInput: true),
+            "",
+            "## 当天完成了什么任务",
+            markdownList(for: completedRecords, includeStartNowInput: false),
+            ""
+        ]
+
+        return sections.joined(separator: "\n")
+    }
+
+    private static func markdownList(
+        for records: [ReminderRecord],
+        includeStartNowInput: Bool
+    ) -> String {
+        guard !records.isEmpty else {
+            return "- 暂无"
+        }
+
+        return records.map { record in
+            let time = dailyTimeFormatter.string(from: record.timestamp)
+            let shortGoalID = String(record.goalID.uuidString.prefix(6))
+            let base = "- \(time) | #\(shortGoalID) | \(record.goalTitle)"
+
+            guard includeStartNowInput,
+                  let startNowInput = record.startNowInput,
+                  !startNowInput.isEmpty
+            else {
+                return base
+            }
+
+            return "\(base) | 当时正在干：\(startNowInput)"
+        }
+        .joined(separator: "\n")
     }
 }

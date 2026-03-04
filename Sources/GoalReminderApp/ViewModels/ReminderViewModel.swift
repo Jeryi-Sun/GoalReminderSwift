@@ -10,6 +10,7 @@ final class ReminderViewModel: ObservableObject {
 
     @Published var goals: [Goal] = []
     @Published var history: [ReminderRecord] = []
+    @Published var startNowInputs: [ReminderRecord] = []
     @Published var selectedGoalID: UUID?
 
     @Published var newGoalTitle = ""
@@ -350,7 +351,17 @@ final class ReminderViewModel: ObservableObject {
     func historyLine(for record: ReminderRecord) -> String {
         let time = Self.historyFormatter.string(from: record.timestamp)
         let shortGoalID = String(record.goalID.uuidString.prefix(6))
+        if let startNowInput = record.startNowInput {
+            return "\(time) | #\(shortGoalID) | \(record.status.rawValue) | \(record.goalTitle) | 当前在做: \(startNowInput)"
+        }
         return "\(time) | #\(shortGoalID) | \(record.status.rawValue) | \(record.goalTitle)"
+    }
+
+    func startNowInputLine(for record: ReminderRecord) -> String {
+        let time = Self.historyFormatter.string(from: record.timestamp)
+        let shortGoalID = String(record.goalID.uuidString.prefix(6))
+        let input = record.startNowInput ?? ""
+        return "\(time) | #\(shortGoalID) | \(record.goalTitle) | \(input)"
     }
 
     private func setStatus(_ text: String) {
@@ -471,12 +482,12 @@ final class ReminderViewModel: ObservableObject {
             goal: goal,
             countdownText: popupCountdownText(),
             overlayOpacity: popupOverlayOpacity
-        ) { [weak self] status in
+        ) { [weak self] status, startNowInput in
             guard let self else {
                 return
             }
             Task { @MainActor in
-                await self.completePopup(goal: goal, status: status)
+                await self.completePopup(goal: goal, status: status, startNowInput: startNowInput)
             }
         }
 
@@ -489,20 +500,23 @@ final class ReminderViewModel: ObservableObject {
         setStatus("\(source)：\(goal.title)")
     }
 
-    private func completePopup(goal: Goal, status: GoalProgressStatus) async {
+    private func completePopup(goal: Goal, status: GoalProgressStatus, startNowInput: String?) async {
         defer {
             popupLocked = false
         }
 
         do {
-            let record = try await store.appendRecord(goal: goal, status: status)
+            let record = try await store.appendRecord(goal: goal, status: status, startNowInput: startNowInput)
             await reloadState(preserveSelection: goal.id, keepCurrentIntervalInput: true)
             let policyNote = updateAdaptiveInterval(after: status)
-            if let policyNote {
-                setStatus("已记录：\(record.status.rawValue)（\(goal.title)）；\(policyNote)")
-            } else {
-                setStatus("已记录：\(record.status.rawValue)（\(goal.title)）")
+            var message = "已记录：\(record.status.rawValue)（\(goal.title)）"
+            if let startNowInput = record.startNowInput {
+                message += "；当前在做：\(startNowInput)"
             }
+            if let policyNote {
+                message += "；\(policyNote)"
+            }
+            setStatus(message)
         } catch {
             handleError(error, title: "记录失败")
         }
@@ -547,9 +561,16 @@ final class ReminderViewModel: ObservableObject {
     ) async {
         let snapshot = await store.snapshot()
         let path = await store.dataFilePath()
+        let recentHistory = Array(snapshot.history.suffix(60).reversed())
 
         goals = snapshot.goals
-        history = Array(snapshot.history.suffix(60).reversed())
+        history = recentHistory
+        startNowInputs = recentHistory.filter { record in
+            guard let input = record.startNowInput else {
+                return false
+            }
+            return !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         dataPathText = "数据文件: \(path)"
 
         baseIntervalMinutes = snapshot.intervalMinutes

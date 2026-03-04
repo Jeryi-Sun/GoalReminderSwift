@@ -446,6 +446,41 @@ struct ContentView: View {
                     }
                     .frame(height: 260)
 
+                    Text("步骤5：马上去完成输入")
+                        .font(.arial(size: 12, weight: .bold))
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color(hex: "FCFCFC"))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color(hex: "E7D8CC"), lineWidth: 1)
+                            }
+
+                        if viewModel.startNowInputs.isEmpty {
+                            Text("暂无输入记录。点击“马上去完成”并输入内容后，会显示在这里。")
+                                .font(.arial(size: 13))
+                                .foregroundStyle(Color(hex: "666666"))
+                        } else {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 6) {
+                                    ForEach(viewModel.startNowInputs) { record in
+                                        Text(viewModel.startNowInputLine(for: record))
+                                            .font(.arial(size: 11))
+                                            .foregroundStyle(Color(hex: "1F1F1F"))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(Color.white)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    }
+                                }
+                                .padding(8)
+                            }
+                        }
+                    }
+                    .frame(height: 180)
+
                     Button("刷新记录") {
                         viewModel.refreshHistory()
                     }

@@ -40,6 +40,7 @@ struct ReminderRecord: Identifiable, Codable, Hashable {
     let goalID: UUID
     let goalTitle: String
     let status: GoalProgressStatus
+    let startNowInput: String?
     let timestamp: Date
 
     init(
@@ -47,12 +48,15 @@ struct ReminderRecord: Identifiable, Codable, Hashable {
         goalID: UUID,
         goalTitle: String,
         status: GoalProgressStatus,
+        startNowInput: String? = nil,
         timestamp: Date = Date()
     ) {
+        let trimmedInput = startNowInput?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.id = id
         self.goalID = goalID
         self.goalTitle = goalTitle
         self.status = status
+        self.startNowInput = trimmedInput?.isEmpty == false ? trimmedInput : nil
         self.timestamp = timestamp
     }
 }

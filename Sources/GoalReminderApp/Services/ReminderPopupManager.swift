@@ -1,6 +1,21 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class ReminderPopupState: ObservableObject {
+    @Published private(set) var isPromptingStartNow = false
+    @Published private(set) var promptSequence = 0
+
+    func openStartNowPrompt() {
+        isPromptingStartNow = true
+        promptSequence += 1
+    }
+
+    func closeStartNowPrompt() {
+        isPromptingStartNow = false
+    }
+}
+
 private final class FloatingReminderPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -20,13 +35,14 @@ final class ReminderPopupManager {
         goal: Goal,
         countdownText: String?,
         overlayOpacity: Double,
-        onSelect: @escaping (GoalProgressStatus) -> Void
+        onSelect: @escaping (GoalProgressStatus, String?) -> Void
     ) -> Bool {
         guard window == nil else {
             return false
         }
 
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
+        let popupState = ReminderPopupState()
 
         let screen = NSScreen.main ?? NSScreen.screens.first
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -34,9 +50,10 @@ final class ReminderPopupManager {
         let rootView = ReminderPopupView(
             goalTitle: goal.title,
             countdownText: countdownText,
-            overlayOpacity: overlayOpacity
-        ) { [weak self] status in
-            onSelect(status)
+            overlayOpacity: overlayOpacity,
+            popupState: popupState
+        ) { [weak self] status, startNowInput in
+            onSelect(status, startNowInput)
             self?.dismiss()
         }
         let hosting = NSHostingView(rootView: rootView)
@@ -69,18 +86,25 @@ final class ReminderPopupManager {
                 return event
             }
 
+            if popupState.isPromptingStartNow {
+                if event.keyCode == 53 {
+                    popupState.closeStartNowPrompt()
+                    return nil
+                }
+                return event
+            }
+
             switch event.charactersIgnoringModifiers {
             case "1":
-                onSelect(.completed)
+                onSelect(.completed, nil)
                 self.dismiss()
                 return nil
             case "2":
-                onSelect(.inProgress)
+                onSelect(.inProgress, nil)
                 self.dismiss()
                 return nil
             case "3":
-                onSelect(.startNow)
-                self.dismiss()
+                popupState.openStartNowPrompt()
                 return nil
             default:
                 return event
