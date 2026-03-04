@@ -4,15 +4,32 @@ struct Goal: Identifiable, Codable, Hashable {
     let id: UUID
     var title: String
     let createdAt: Date
+    var isCompleted: Bool
 
-    init(id: UUID = UUID(), title: String, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), title: String, createdAt: Date = Date(), isCompleted: Bool = false) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
+        self.isCompleted = isCompleted
     }
 
     var shortID: String {
         String(id.uuidString.prefix(6))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case createdAt
+        case isCompleted
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decode(String.self, forKey: .title)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
     }
 }
 
@@ -62,6 +79,8 @@ struct ReminderRecord: Identifiable, Codable, Hashable {
 }
 
 struct AppState: Codable {
+    static let defaultDailyMarkdownRootPath = "/Users/sunzhongxiang/.openclaw/workspace/daily_remainder"
+
     var intervalMinutes: Double
     var minIntervalMinutes: Double
     var maxIntervalMinutes: Double
@@ -73,6 +92,7 @@ struct AppState: Codable {
     var goals: [Goal]
     var nextGoalIndex: Int
     var history: [ReminderRecord]
+    var dailyMarkdownRootPath: String
 
     init(
         intervalMinutes: Double = 30,
@@ -85,7 +105,8 @@ struct AppState: Codable {
         countdownTargetDate: Date? = nil,
         goals: [Goal] = [],
         nextGoalIndex: Int = 0,
-        history: [ReminderRecord] = []
+        history: [ReminderRecord] = [],
+        dailyMarkdownRootPath: String = AppState.defaultDailyMarkdownRootPath
     ) {
         self.intervalMinutes = intervalMinutes
         self.minIntervalMinutes = max(5.0 / 60.0, min(minIntervalMinutes, intervalMinutes))
@@ -98,6 +119,8 @@ struct AppState: Codable {
         self.goals = goals
         self.nextGoalIndex = nextGoalIndex
         self.history = history
+        let trimmedPath = dailyMarkdownRootPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.dailyMarkdownRootPath = trimmedPath.isEmpty ? AppState.defaultDailyMarkdownRootPath : trimmedPath
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -112,6 +135,7 @@ struct AppState: Codable {
         case goals
         case nextGoalIndex
         case history
+        case dailyMarkdownRootPath
     }
 
     init(from decoder: any Decoder) throws {
@@ -138,6 +162,10 @@ struct AppState: Codable {
         goals = try container.decodeIfPresent([Goal].self, forKey: .goals) ?? []
         nextGoalIndex = try container.decodeIfPresent(Int.self, forKey: .nextGoalIndex) ?? 0
         history = try container.decodeIfPresent([ReminderRecord].self, forKey: .history) ?? []
+        let decodedPath = try container.decodeIfPresent(String.self, forKey: .dailyMarkdownRootPath)
+            ?? AppState.defaultDailyMarkdownRootPath
+        let trimmedPath = decodedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        dailyMarkdownRootPath = trimmedPath.isEmpty ? AppState.defaultDailyMarkdownRootPath : trimmedPath
     }
 }
 
@@ -214,6 +242,8 @@ enum AppError: LocalizedError {
     case invalidAdaptiveStep(String)
     case invalidServerChanConfig(String)
     case serverChanSendFailed(String)
+    case allGoalsCompleted
+    case invalidDailyLogPath
 
     var errorDescription: String? {
         switch self {
@@ -239,6 +269,10 @@ enum AppError: LocalizedError {
             return "Server酱 配置无效：\(detail)"
         case .serverChanSendFailed(let detail):
             return "Server酱 发送失败：\(detail)"
+        case .allGoalsCompleted:
+            return "所有任务都已完成，没有下一个待提醒目标。"
+        case .invalidDailyLogPath:
+            return "日志目录不能为空。"
         }
     }
 }

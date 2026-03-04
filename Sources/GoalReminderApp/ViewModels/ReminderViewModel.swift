@@ -12,6 +12,7 @@ final class ReminderViewModel: ObservableObject {
     @Published var history: [ReminderRecord] = []
     @Published var startNowInputs: [ReminderRecord] = []
     @Published var selectedGoalID: UUID?
+    @Published var draggedGoalID: UUID?
 
     @Published var newGoalTitle = ""
     @Published var intervalText = "30.00"
@@ -25,6 +26,8 @@ final class ReminderViewModel: ObservableObject {
     @Published var nextReminderText = "下次提醒: --"
     @Published var statusText = "状态: 就绪"
     @Published var dataPathText = ""
+    @Published var dailyMarkdownRootPathText = AppState.defaultDailyMarkdownRootPath
+    @Published var dailyMarkdownPreviewPathText = "日志输出: --"
 
     @Published var mobilePushEnabled = false
     @Published var mobileIdleThresholdText = "20"
@@ -270,6 +273,24 @@ final class ReminderViewModel: ObservableObject {
         }
     }
 
+    func saveDailyMarkdownRootPath() {
+        let path = dailyMarkdownRootPathText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            handleError(AppError.invalidDailyLogPath, title: "保存日志目录失败")
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try await store.setDailyMarkdownRootPath(path)
+                await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: true)
+                setStatus("每日 Markdown 日志目录已更新。")
+            } catch {
+                handleError(error, title: "保存日志目录失败")
+            }
+        }
+    }
+
     func clearCountdown() {
         countdownEnabled = false
         updateCountdownCompactText()
@@ -318,7 +339,10 @@ final class ReminderViewModel: ObservableObject {
     func triggerNextGoalNow() {
         Task { @MainActor in
             do {
-                guard let goal = try await store.rotateNextGoal() else {
+                guard let goal = await store.nextPendingGoal() else {
+                    if await store.hasGoals() {
+                        throw AppError.allGoalsCompleted
+                    }
                     throw AppError.noGoalsAvailable
                 }
                 await reloadState(preserveSelection: goal.id, keepCurrentIntervalInput: true)
@@ -327,6 +351,45 @@ final class ReminderViewModel: ObservableObject {
                 handleError(error, title: "触发失败")
             }
         }
+    }
+
+    func goalMetaLine(for goal: Goal) -> String {
+        let status = goal.isCompleted ? "已完成" : "待提醒"
+        return "#\(goal.shortID) · \(status)"
+    }
+
+    func moveGoalLocally(draggedID: UUID, to targetID: UUID) {
+        guard draggedID != targetID,
+              let fromIndex = goals.firstIndex(where: { $0.id == draggedID }),
+              let toIndex = goals.firstIndex(where: { $0.id == targetID })
+        else {
+            return
+        }
+
+        let draggedGoal = goals.remove(at: fromIndex)
+        goals.insert(draggedGoal, at: toIndex)
+
+        if selectedGoalID == nil {
+            selectedGoalID = draggedGoal.id
+        }
+    }
+
+    func persistGoalOrder() {
+        let orderedGoalIDs = goals.map(\.id)
+        Task { @MainActor in
+            do {
+                try await store.reorderGoals(goalIDs: orderedGoalIDs)
+                draggedGoalID = nil
+                await reloadState(preserveSelection: selectedGoalID, keepCurrentIntervalInput: true)
+                setStatus("任务顺序已更新，后续提醒会按当前顺序推进。")
+            } catch {
+                handleError(error, title: "调整顺序失败")
+            }
+        }
+    }
+
+    func cancelGoalDragging() {
+        draggedGoalID = nil
     }
 
     func refreshHistory() {
@@ -459,16 +522,16 @@ final class ReminderViewModel: ObservableObject {
             return
         }
 
-        do {
-            guard let goal = try await store.rotateNextGoal() else {
+        guard let goal = await store.nextPendingGoal() else {
+            if await store.hasGoals() {
+                setStatus("所有任务已完成，顺序提醒已暂停。")
+            } else {
                 setStatus("当前没有目标，请先添加目标。")
-                return
             }
-            await reloadState(preserveSelection: goal.id, keepCurrentIntervalInput: true)
-            presentPopup(for: goal, source: "定时提醒")
-        } catch {
-            handleError(error, title: "定时提醒失败")
+            return
         }
+        await reloadState(preserveSelection: goal.id, keepCurrentIntervalInput: true)
+        presentPopup(for: goal, source: "定时提醒")
     }
 
     private func presentPopup(for goal: Goal, source: String) {
@@ -572,6 +635,8 @@ final class ReminderViewModel: ObservableObject {
             return !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         dataPathText = "数据文件: \(path)"
+        dailyMarkdownRootPathText = snapshot.dailyMarkdownRootPath
+        dailyMarkdownPreviewPathText = "日志输出: \(Self.dailyMarkdownPreviewPath(root: snapshot.dailyMarkdownRootPath, now: Date()))"
 
         baseIntervalMinutes = snapshot.intervalMinutes
         minIntervalMinutes = min(snapshot.minIntervalMinutes, baseIntervalMinutes)
@@ -709,6 +774,21 @@ final class ReminderViewModel: ObservableObject {
             return
         }
         countdownCompactText = Self.countdownCompactText(targetDate: targetDate, now: Date())
+    }
+
+    private static func dailyMarkdownPreviewPath(root: String, now: Date) -> String {
+        let trimmedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRoot = NSString(string: trimmedRoot).expandingTildeInPath
+        let safeRoot = normalizedRoot.isEmpty ? AppState.defaultDailyMarkdownRootPath : normalizedRoot
+        let components = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: now)
+        let year = String(components.year ?? 0)
+        let month = String(format: "%02d", components.month ?? 0)
+        let day = String(format: "%02d", components.day ?? 0)
+        return URL(fileURLWithPath: safeRoot, isDirectory: true)
+            .appendingPathComponent(year, isDirectory: true)
+            .appendingPathComponent(month, isDirectory: true)
+            .appendingPathComponent("\(day).md", isDirectory: false)
+            .path
     }
 
     private func isWithinWorkTime(config: MobilePushConfig) -> Bool {

@@ -53,6 +53,7 @@
 - Server酱 微信推送：空闲达到阈值时自动推送到微信
 - 空闲推送工作时段限制：仅在指定时段内触发（支持跨午夜）
 - 历史记录追踪
+- 每日日志 Markdown 输出：按 `年/月/日.md` 规范落盘，可直接被 `OpenClaw` 读取生成每日工作总结
 - 本地持久化存储
 
 ## 使用方案（推荐）
@@ -64,6 +65,8 @@
 5. 如需空闲微信提醒，开启工作时段限制（例如 `09:00-12:00`、`13:00-18:30` 这种主工作区间）。
 6. 每天结束前看“最近记录”：
    你会清楚看到自己是持续推进，还是频繁偏离。
+7. 如果你在用 `OpenClaw` 或其他 agent 工作流，直接读取每日 Markdown 日志目录即可自动生成当天总结。
+   这是这个工具非常关键的一项能力：它不只是提醒你，还能把结构化工作轨迹喂给 agent。
 
 ## 快速开始
 
@@ -105,6 +108,14 @@ swift build
 swift run GoalReminderApp
 ```
 
+### 使用脚本运行
+
+```bash
+cd /Users/sunzhongxiang/Desktop/科研/development_tools/target_remainder/GoalReminderSwift
+./scripts/build_release_app.sh
+./scripts/run_goal_reminder.sh
+```
+
 ### 在 Xcode 中运行
 
 1. 打开 Xcode
@@ -136,3 +147,12 @@ swift run GoalReminderApp
 
 - `~/Library/Application Support/GoalReminderSwift/state.json`
 - `~/Library/Application Support/GoalReminderSwift/mobile_push_config.json`
+
+每日日志默认输出到：
+
+- `~/.openclaw/workspace/daily_remainder/<年>/<月>/<日>.md`
+
+说明：
+
+- 日志根目录现在可以在应用界面里外部调控，不再写死。
+- 这些 Markdown 日志是为 agent 读取而设计的，可直接被 `OpenClaw` 用来生成每日工作总结、复盘和任务推进摘要。

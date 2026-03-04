@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var viewModel: ReminderViewModel
@@ -103,6 +104,10 @@ struct ContentView: View {
                 Text("步骤2：选择目标并操作")
                     .font(.arial(size: 12, weight: .bold))
 
+                Text("拖动任务可调整顺序；系统只会提醒当前排在最前面的未完成任务。")
+                    .font(.arial(size: 11))
+                    .foregroundStyle(Color(hex: "666666"))
+
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color(hex: "FCFCFC"))
@@ -116,16 +121,19 @@ struct ContentView: View {
                             .font(.arial(size: 13))
                             .foregroundStyle(Color(hex: "666666"))
                     } else {
-                        List(viewModel.goals, selection: $viewModel.selectedGoalID) { goal in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(goal.title)
-                                    .font(.arial(size: 13, weight: .bold))
-                                Text("#\(goal.shortID)")
-                                    .font(.arial(size: 11))
-                                    .foregroundStyle(Color(hex: "666666"))
+                        List(selection: $viewModel.selectedGoalID) {
+                            ForEach(viewModel.goals) { goal in
+                                goalRow(for: goal)
+                                    .tag(goal.id)
+                                    .onDrag {
+                                        viewModel.draggedGoalID = goal.id
+                                        return NSItemProvider(object: goal.id.uuidString as NSString)
+                                    }
+                                    .onDrop(
+                                        of: [UTType.text.identifier],
+                                        delegate: GoalReorderDropDelegate(targetGoal: goal, viewModel: viewModel)
+                                    )
                             }
-                            .padding(.vertical, 4)
-                            .tag(goal.id)
                         }
                         .listStyle(.inset)
                         .scrollContentBackground(.hidden)
@@ -156,7 +164,7 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
 
-                Button("立即提醒下一个目标") {
+                Button("立即提醒当前顺位目标") {
                     viewModel.triggerNextGoalNow()
                 }
                 .buttonStyle(.plain)
@@ -277,6 +285,29 @@ struct ContentView: View {
                     Text(viewModel.dataPathText)
                         .font(.arial(size: 10))
                         .foregroundStyle(Color(hex: "666666"))
+
+                    Divider()
+
+                    Text("每日 Markdown 日志")
+                        .font(.arial(size: 14, weight: .bold))
+
+                    TextField("日志根目录", text: $viewModel.dailyMarkdownRootPathText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.arial(size: 12))
+
+                    Text(viewModel.dailyMarkdownPreviewPathText)
+                        .font(.arial(size: 10))
+                        .foregroundStyle(Color(hex: "666666"))
+
+                    Button("保存日志目录") {
+                        viewModel.saveDailyMarkdownRootPath()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.arial(size: 12, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color(hex: "B4DDF4"))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                     Divider()
 
@@ -497,6 +528,42 @@ struct ContentView: View {
         .frame(width: 500)
     }
 
+    private func goalRow(for goal: Goal) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(hex: "FAE6D7"))
+
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color(hex: "666666"))
+            }
+            .frame(width: 34, height: 34)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(goal.title)
+                    .font(.arial(size: 13, weight: .bold))
+                    .foregroundStyle(Color(hex: "1F1F1F"))
+                    .strikethrough(goal.isCompleted, color: Color(hex: "666666"))
+
+                Text(viewModel.goalMetaLine(for: goal))
+                    .font(.arial(size: 11))
+                    .foregroundStyle(goal.isCompleted ? Color(hex: "DE7D82") : Color(hex: "666666"))
+            }
+
+            Spacer()
+
+            Text(goal.isCompleted ? "已完成" : "进行中")
+                .font(.arial(size: 10, weight: .bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(goal.isCompleted ? Color(hex: "F3C7BF") : Color(hex: "B4DDF4"))
+                .clipShape(Capsule())
+        }
+        .padding(.vertical, 4)
+        .opacity(goal.isCompleted ? 0.58 : 1.0)
+    }
+
     private var statusBar: some View {
         Card {
             VStack(alignment: .leading, spacing: 4) {
@@ -515,6 +582,27 @@ struct ContentView: View {
     }
 }
 
+private struct GoalReorderDropDelegate: DropDelegate {
+    let targetGoal: Goal
+    let viewModel: ReminderViewModel
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedGoalID = viewModel.draggedGoalID else {
+            return
+        }
+        viewModel.moveGoalLocally(draggedID: draggedGoalID, to: targetGoal.id)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        viewModel.persistGoalOrder()
+        return true
+    }
+}
+
 private struct HelpSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -525,7 +613,7 @@ private struct HelpSheetView: View {
 
             Text("1. 添加目标")
                 .font(.arial(size: 14, weight: .bold))
-            Text("在左侧输入框写入目标，点击“添加目标”。")
+            Text("在左侧输入框写入目标，点击“添加目标”；拖动左侧任务可以调整提醒顺序。")
                 .font(.arial(size: 13))
 
             Text("2. 设置提醒间隔")
@@ -545,7 +633,7 @@ private struct HelpSheetView: View {
 
             Text("5. 弹窗反馈")
                 .font(.arial(size: 14, weight: .bold))
-            Text("到时间会全屏弹窗，点击按钮或按键盘 1/2/3 选择当前状态。")
+            Text("到时间会全屏弹窗，系统只提醒当前排在最前面的未完成任务。点击按钮或按键盘 1/2/3 选择当前状态；选“已完成”后才会推进到下一个任务。")
                 .font(.arial(size: 13))
 
             Spacer()

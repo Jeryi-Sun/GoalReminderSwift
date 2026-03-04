@@ -5,10 +5,6 @@ actor AppDataStore {
     private static let minAdaptiveStepMinutes = 5.0 / 60.0
     private static let minPopupOverlayOpacity = 0.15
     private static let maxHistoryCount = 500
-    private static let dailyMarkdownRootURL = URL(
-        fileURLWithPath: "/Users/sunzhongxiang/.openclaw/workspace/daily_remainder",
-        isDirectory: true
-    )
 
     private static let dailyTitleFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -64,6 +60,19 @@ actor AppDataStore {
 
     func dataFilePath() -> String {
         fileURL.path
+    }
+
+    func dailyMarkdownRootPath() -> String {
+        state.dailyMarkdownRootPath
+    }
+
+    func setDailyMarkdownRootPath(_ path: String) throws {
+        let normalizedPath = Self.normalizedDailyMarkdownRootPath(path)
+        guard !normalizedPath.isEmpty else {
+            throw AppError.invalidDailyLogPath
+        }
+        state.dailyMarkdownRootPath = normalizedPath
+        try persist()
     }
 
     func snapshot() -> AppState {
@@ -163,15 +172,29 @@ actor AppDataStore {
         state.goals.first { $0.id == id }
     }
 
-    func rotateNextGoal() throws -> Goal? {
-        guard !state.goals.isEmpty else {
-            return nil
+    func hasGoals() -> Bool {
+        !state.goals.isEmpty
+    }
+
+    func nextPendingGoal() -> Goal? {
+        state.goals.first { !$0.isCompleted }
+    }
+
+    func reorderGoals(goalIDs: [UUID]) throws {
+        guard goalIDs.count == state.goals.count else {
+            throw AppError.goalNotFound
         }
-        let idx = state.nextGoalIndex % state.goals.count
-        let goal = state.goals[idx]
-        state.nextGoalIndex = (idx + 1) % state.goals.count
+
+        let goalMap = Dictionary(uniqueKeysWithValues: state.goals.map { ($0.id, $0) })
+        let reordered = try goalIDs.map { id -> Goal in
+            guard let goal = goalMap[id] else {
+                throw AppError.goalNotFound
+            }
+            return goal
+        }
+
+        state.goals = reordered
         try persist()
-        return goal
     }
 
     func appendRecord(goal: Goal, status: GoalProgressStatus, startNowInput: String? = nil) throws -> ReminderRecord {
@@ -184,6 +207,10 @@ actor AppDataStore {
         state.history.append(record)
         if state.history.count > Self.maxHistoryCount {
             state.history.removeFirst(state.history.count - Self.maxHistoryCount)
+        }
+        if status == .completed,
+           let index = state.goals.firstIndex(where: { $0.id == goal.id }) {
+            state.goals[index].isCompleted = true
         }
         try persist()
         try? syncDailyMarkdown(for: record.timestamp)
@@ -213,7 +240,7 @@ actor AppDataStore {
 
     private func syncDailyMarkdown(for date: Date) throws {
         let records = dailyRecords(for: date)
-        let fileURL = Self.dailyMarkdownFileURL(for: date)
+        let fileURL = Self.dailyMarkdownFileURL(for: date, rootPath: state.dailyMarkdownRootPath)
         let folderURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
 
@@ -232,17 +259,38 @@ actor AppDataStore {
             .sorted { $0.timestamp < $1.timestamp }
     }
 
-    private static func dailyMarkdownFileURL(for date: Date) -> URL {
+    private static func dailyMarkdownFileURL(for date: Date, rootPath: String) -> URL {
         let calendar = Calendar(identifier: .gregorian)
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         let year = String(components.year ?? 0)
         let month = String(format: "%02d", components.month ?? 0)
         let day = String(format: "%02d", components.day ?? 0)
 
-        return dailyMarkdownRootURL
+        let rootURL = URL(fileURLWithPath: normalizedDailyMarkdownRootPath(rootPath), isDirectory: true)
+
+        return rootURL
             .appendingPathComponent(year, isDirectory: true)
             .appendingPathComponent(month, isDirectory: true)
             .appendingPathComponent("\(day).md", isDirectory: false)
+    }
+
+    private static func normalizedDailyMarkdownRootPath(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+
+        let nsPath = NSString(string: trimmed).expandingTildeInPath
+        if nsPath.isEmpty {
+            return ""
+        }
+        if nsPath.hasPrefix("/") {
+            return nsPath
+        }
+
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(nsPath, isDirectory: true)
+            .path
     }
 
     private static func dailyMarkdownContent(
